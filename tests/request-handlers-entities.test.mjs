@@ -1532,6 +1532,97 @@ describe("handleExtrinsics", () => {
     assert.ok(captures.params.flat().includes(0));
   });
 
+  test("uses observed-at index hint for standalone time filters", async () => {
+    const { env, captures } = dbWith({ extrinsics: [] });
+    await handleExtrinsics(
+      req("/api/v1/extrinsics"),
+      env,
+      url("/api/v1/extrinsics?from=1750000000000"),
+    );
+    const sql = captures.sql.find((s) => /FROM extrinsics/.test(s));
+    assert.ok(/INDEXED BY idx_extrinsics_observed_order/.test(sql));
+  });
+
+  test("short-circuits impossible future time filters before D1", async () => {
+    const { env, captures } = dbWith({ extrinsics: [] });
+    const body = await json(
+      await handleExtrinsics(
+        req("/api/v1/extrinsics"),
+        env,
+        url("/api/v1/extrinsics?from=9007199254740991"),
+      ),
+    );
+    assert.equal(body.data.extrinsic_count, 0);
+    assert.equal(
+      captures.sql.filter((s) => /FROM extrinsics/.test(s)).length,
+      0,
+    );
+  });
+
+  test("short-circuits an expired to< retention-floor window before D1", async () => {
+    // to=2000 (1970 epoch) is below the retained hot window floor; every
+    // candidate row would already be pruned, so never touch D1.
+    const { env, captures } = dbWith({ extrinsics: [] });
+    const body = await json(
+      await handleExtrinsics(
+        req("/api/v1/extrinsics"),
+        env,
+        url("/api/v1/extrinsics?to=2000"),
+      ),
+    );
+    assert.equal(body.data.extrinsic_count, 0);
+    assert.equal(
+      captures.sql.filter((s) => /FROM extrinsics/.test(s)).length,
+      0,
+    );
+  });
+
+  test("short-circuits an inverted from>to window before D1", async () => {
+    const { env, captures } = dbWith({ extrinsics: [] });
+    const now = Date.now();
+    const body = await json(
+      await handleExtrinsics(
+        req("/api/v1/extrinsics"),
+        env,
+        url(`/api/v1/extrinsics?from=${now}&to=${now - 60_000}`),
+      ),
+    );
+    assert.equal(body.data.extrinsic_count, 0);
+    assert.equal(
+      captures.sql.filter((s) => /FROM extrinsics/.test(s)).length,
+      0,
+    );
+  });
+
+  test("a valid recent window is NOT short-circuited and queries D1", async () => {
+    const { env, captures } = dbWith({ extrinsics: [] });
+    const now = Date.now();
+    await handleExtrinsics(
+      req("/api/v1/extrinsics"),
+      env,
+      url(`/api/v1/extrinsics?from=${now - 60_000}&to=${now}`),
+    );
+    const sql = captures.sql.find((s) => /FROM extrinsics/.test(s));
+    assert.ok(sql, "a valid window must reach D1");
+    assert.ok(/observed_at >= \?/.test(sql));
+    assert.ok(/observed_at <= \?/.test(sql));
+  });
+
+  test("drops the observed-at index hint when an equality filter is present", async () => {
+    // With a (signer) equality the planner should use the order-aligned
+    // signer index, not be forced onto the observed-at one.
+    const { env, captures } = dbWith({ extrinsics: [] });
+    await handleExtrinsics(
+      req("/api/v1/extrinsics"),
+      env,
+      url("/api/v1/extrinsics?from=1750000000000&signer=5Signer"),
+    );
+    const sql = captures.sql.find((s) => /FROM extrinsics/.test(s));
+    assert.ok(sql);
+    assert.ok(!/INDEXED BY/.test(sql), "equality filter must drop the hint");
+    assert.ok(/signer = \?/.test(sql));
+  });
+
   test("cursor seeks on (block_number, extrinsic_index)", async () => {
     const { env, captures } = dbWith({
       extrinsics: [extrinsicRow({ block_number: 150, extrinsic_index: 4 })],
