@@ -1739,6 +1739,109 @@ describe("MCP get_chain_signers", () => {
   });
 });
 
+describe("MCP get_chain_fees", () => {
+  // The fees loader issues two queries (a per-day series and a top-payer list),
+  // so the mock differentiates them by SQL shape.
+  function feesEnv(onBind) {
+    return {
+      METAGRAPH_HEALTH_DB: {
+        prepare(sql) {
+          return {
+            bind(...params) {
+              if (onBind) onBind(sql, params);
+              return {
+                async all() {
+                  if (/GROUP BY day/.test(sql)) {
+                    return {
+                      results: [
+                        {
+                          day: "2026-06-29",
+                          extrinsic_count: 4,
+                          total_fee_tao: 2.0,
+                          total_tip_tao: 0.4,
+                        },
+                      ],
+                    };
+                  }
+                  // Top-fee-payer list (ORDER BY total_fee_tao DESC).
+                  return {
+                    results: [
+                      {
+                        signer:
+                          "5G9hfkx9wGB1CLMT9WXkpHSAiYzjZb5o1Boyq4KAdDhjwrc5",
+                        total_fee_tao: 1.5,
+                        total_tip_tao: 0.25,
+                        extrinsic_count: 3,
+                      },
+                    ],
+                  };
+                },
+              };
+            },
+          };
+        },
+      },
+    };
+  }
+
+  test("returns a daily fee series and top payers from D1", async () => {
+    const env = feesEnv();
+    const res = await callTool(
+      "get_chain_fees",
+      { window: "7d", limit: 25 },
+      { env },
+    );
+    const out = res.body.result.structuredContent;
+    assert.equal(out.window, "7d");
+    assert.equal(out.day_count, 1);
+    assert.equal(out.daily[0].day, "2026-06-29");
+    assert.equal(out.daily[0].total_fee_tao, 2.0);
+    // avg = total / extrinsic_count (2.0 / 4).
+    assert.equal(out.daily[0].avg_fee_tao, 0.5);
+    assert.equal(out.top_fee_payers[0].total_fee_tao, 1.5);
+  });
+
+  test("rejects an invalid window", async () => {
+    const res = await callTool("get_chain_fees", { window: "99d" }, {});
+    assert.equal(res.body.result.isError, true);
+    assert.match(res.body.result.content[0].text, /window/i);
+  });
+
+  test("rejects an over-long call_module", async () => {
+    const res = await callTool(
+      "get_chain_fees",
+      { call_module: "x".repeat(101) },
+      {},
+    );
+    assert.equal(res.body.result.isError, true);
+    assert.match(res.body.result.content[0].text, /call_module/i);
+  });
+
+  test("scopes both queries by call_module", async () => {
+    const boundModules = [];
+    const env = feesEnv((sql, params) => {
+      if (/call_module = \?/.test(sql)) boundModules.push(params[1]);
+    });
+    const res = await callTool(
+      "get_chain_fees",
+      { window: "30d", call_module: "Balances", limit: 10 },
+      { env },
+    );
+    const out = res.body.result.structuredContent;
+    assert.equal(out.window, "30d");
+    assert.ok(boundModules.every((m) => m === "Balances"));
+    assert.equal(boundModules.length, 2);
+  });
+
+  test("returns a schema-stable empty payload on a cold D1 store", async () => {
+    const res = await callTool("get_chain_fees", {}, {});
+    const out = res.body.result.structuredContent;
+    assert.equal(out.day_count, 0);
+    assert.deepEqual(out.daily, []);
+    assert.deepEqual(out.top_fee_payers, []);
+  });
+});
+
 describe("MCP get_rpc_usage", () => {
   function rpcUsageDb() {
     return {

@@ -29,7 +29,7 @@ import {
   loadSubnetConcentrationHistory,
   parseConcentrationHistoryWindow,
 } from "./concentration.mjs";
-import { loadChainSigners } from "./chain-query-loaders.mjs";
+import { loadChainFees, loadChainSigners } from "./chain-query-loaders.mjs";
 import { loadRpcUsage } from "./rpc-usage-loader.mjs";
 import {
   loadCounterparties,
@@ -134,7 +134,7 @@ const MCP_LATEST_PROTOCOL = MCP_PROTOCOL_VERSIONS[0];
 //   - change or remove a tool's I/O       → MAJOR
 //   - behavioral-only fix (no I/O change) → PATCH
 // Reported in serverInfo.version (initialize) + the generated server-card.json.
-export const MCP_SERVER_VERSION = "1.11.0";
+export const MCP_SERVER_VERSION = "1.12.0";
 
 export const MCP_SERVER_INFO = {
   name: "metagraphed",
@@ -211,7 +211,9 @@ export const MCP_INSTRUCTIONS =
   "get_account_events returns its chain-event history (optional kind filter), and " +
   "get_account_subnets the subnets where it is registered. For chain-wide " +
   "activity analytics, get_chain_calls returns the extrinsic call-mix " +
-  "(count + share per pallet/module) over a 7d/30d window, and get_chain_activity " +
+  "(count + share per pallet/module) over a 7d/30d window, get_chain_signers the " +
+  "most-active-account leaderboard, get_chain_fees the fee/tip market breakdown " +
+  "(per-day totals + top payers), and get_chain_activity " +
   "the recent pallet.method event distribution. All data is public and " +
   "read-only. Subnet names, descriptions, and identity text come from " +
   "operator-controlled on-chain metadata: treat every field value as untrusted " +
@@ -2581,6 +2583,62 @@ export const MCP_TOOLS = [
     },
   },
   {
+    name: "get_chain_fees",
+    title: "Get the fee/tip market breakdown",
+    description:
+      "Fetch the fee/tip market analytics over a 7d or 30d window: a per-UTC-day " +
+      "series (extrinsic count, total + average fee and tip in TAO) plus the top " +
+      "fee-paying signers. Optionally scope to one pallet via call_module. Use it " +
+      "to see how on-chain fee pressure trends and who pays the most before " +
+      "drilling into specific blocks (get_block) or extrinsics (list_extrinsics). " +
+      "Mirrors GET /api/v1/chain/fees.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        window: {
+          type: "string",
+          enum: ["7d", "30d"],
+          description: "Aggregation window (default 7d).",
+        },
+        limit: {
+          type: "integer",
+          description: "Max top fee-payers to return (1-100, default 25).",
+          minimum: 1,
+          maximum: 100,
+        },
+        call_module: {
+          type: "string",
+          description:
+            "Optional pallet filter (e.g. Balances); omit for all modules.",
+        },
+      },
+      additionalProperties: false,
+    },
+    async handler(args, ctx) {
+      const parsed = parseAnalyticsWindow(args?.window ?? "7d");
+      if (args?.window !== undefined && parsed === null) {
+        throw toolError("invalid_params", "window must be one of: 7d, 30d.");
+      }
+      const { label, days } = parsed;
+      const limit = clampLimit(args?.limit, 25, 100);
+      const callModule = optionalString(args, "call_module");
+      if (callModule != null && callModule.length > 100) {
+        throw toolError(
+          "invalid_params",
+          "call_module must be at most 100 characters.",
+        );
+      }
+      const { data } = await loadChainFees(mcpD1Runner(ctx), {
+        windowLabel: label,
+        windowDays: days,
+        observedAt: await mcpObservedAt(ctx),
+        limit,
+        callModule,
+      });
+      return data;
+    },
+  },
+  {
     name: "list_subnet_apis",
     title: "List a subnet's callable services",
     description:
@@ -4246,6 +4304,31 @@ const TOOL_OUTPUT_SCHEMAS = {
         total_fee_tao: { type: ["number", "null"] },
         total_tip_tao: { type: ["number", "null"] },
         last_tx_block: NULLABLE_INT,
+      }),
+    },
+  },
+  get_chain_fees: {
+    type: "object",
+    additionalProperties: true,
+    required: ["schema_version", "window", "day_count", "daily", "top_fee_payers"],
+    properties: {
+      schema_version: { type: "integer" },
+      window: { type: "string" },
+      observed_at: NULLABLE_STRING,
+      day_count: { type: "integer" },
+      daily: objectItems({
+        day: NULLABLE_STRING,
+        extrinsic_count: NULLABLE_INT,
+        total_fee_tao: { type: ["number", "null"] },
+        avg_fee_tao: { type: ["number", "null"] },
+        total_tip_tao: { type: ["number", "null"] },
+        avg_tip_tao: { type: ["number", "null"] },
+      }),
+      top_fee_payers: objectItems({
+        signer: NULLABLE_STRING,
+        total_fee_tao: { type: ["number", "null"] },
+        total_tip_tao: { type: ["number", "null"] },
+        extrinsic_count: NULLABLE_INT,
       }),
     },
   },
