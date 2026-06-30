@@ -2213,6 +2213,25 @@ describe("script utility contracts", () => {
     });
   });
 
+  test("a single-segment budget glob does not match nested paths", () => {
+    const results = evaluateArtifactBudgets([
+      // Flat paths still match their single-segment glob (schemas budget warns
+      // at 1.5M / providers budget warns at 1M, so these stay "ok").
+      { path: "schemas/sn-6.json", size_bytes: 1_400_000 },
+      { path: "providers/acme/endpoints.json", size_bytes: 900_000 },
+      // Nested paths must NOT match `schemas/*.json` / `providers/*/endpoints.json`
+      // (the `*` can't cross `/`); they fall back to the default budget
+      // (warn 250k / fail 1M), so 300k is "warn" rather than the buggy "ok".
+      { path: "schemas/sn-6/openapi.json", size_bytes: 300_000 },
+      { path: "providers/acme/corp/endpoints.json", size_bytes: 300_000 },
+    ]);
+
+    assert.deepEqual(
+      results.map((result) => result.status),
+      ["ok", "ok", "warn", "warn"],
+    );
+  });
+
   test("loads canonical OpenAPI component schemas", async () => {
     const openapi = await buildCanonicalOpenApiArtifact(
       "1970-01-01T00:00:00.000Z",

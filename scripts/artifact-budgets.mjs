@@ -62,8 +62,14 @@ function budgetMatches(pattern, path) {
   if (!pattern.includes("*")) {
     return false;
   }
-  const [prefix, suffix] = pattern.split("*");
-  return path.startsWith(prefix) && path.endsWith(suffix);
+  // `*` is a single path-segment glob — it must not cross a `/`. A plain
+  // prefix/suffix check let `schemas/*.json` swallow `schemas/sn-6/openapi.json`
+  // and apply the wrong budget; anchor each `*` to one segment ([^/]*) so a
+  // nested artifact falls back to the default budget, as the patterns intend.
+  const regexSource = pattern
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, "[^/]*");
+  return new RegExp(`^${regexSource}$`).test(path);
 }
 
 function budget(path, warnBytes, failBytes) {
