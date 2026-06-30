@@ -284,12 +284,13 @@ test("formatRegistration drops invalid netuid and uid cells instead of leaking s
   const out = formatRegistration({
     netuid: "not-a-netuid",
     uid: "-1",
-    stake_tao: null,
+    stake_tao: "not-a-number",
     validator_permit: 0,
     active: 0,
   });
   assert.equal(out.netuid, null);
   assert.equal(out.uid, null);
+  assert.equal(out.stake_tao, null);
 });
 
 test("buildAccountSummary and buildAccountSubnets keep coerced registration types", () => {
