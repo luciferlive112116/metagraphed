@@ -506,6 +506,34 @@ describe("feeds — filterUntil", () => {
   });
 });
 
+describe("feeds — filterSince + filterUntil bounded window", () => {
+  const items = [
+    { id: "older", timestamp: "2026-06-05T00:00:00.000Z" },
+    { id: "middle", timestamp: "2026-06-15T00:00:00.000Z" },
+    { id: "newer", timestamp: "2026-06-25T00:00:00.000Z" },
+  ];
+
+  test("keeps only the item inside [since, until], dropping older and newer", () => {
+    const windowed = filterUntil(
+      filterSince(items, Date.parse("2026-06-10T00:00:00.000Z")),
+      Date.parse("2026-06-20T00:00:00.000Z"),
+    );
+    assert.deepEqual(
+      windowed.map((i) => i.id),
+      ["middle"],
+    );
+  });
+
+  test("composition is order-independent (until∘since === since∘until)", () => {
+    const sinceMs = Date.parse("2026-06-10T00:00:00.000Z");
+    const untilMs = Date.parse("2026-06-20T00:00:00.000Z");
+    assert.deepEqual(
+      filterUntil(filterSince(items, sinceMs), untilMs),
+      filterSince(filterUntil(items, untilMs), sinceMs),
+    );
+  });
+});
+
 describe("feeds — ?since= filter", () => {
   test("a future since yields an empty but valid feed (200)", async () => {
     const { res, text } = await feed(

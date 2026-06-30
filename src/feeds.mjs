@@ -451,11 +451,12 @@ export function parseFeedPath(pathname) {
   return null;
 }
 
-// Strictly parse the public `?since=` contract instead of delegating validation
-// to Date.parse(), which accepts implementation-defined inputs and normalizes
-// overflow dates. Accepted forms are an ISO calendar date (UTC midnight) or an
-// ISO date-time with an explicit UTC/offset designator.
-function parseSinceParam(value) {
+// Strictly parse a public feed date-bound contract (`?since=` / `?until=`)
+// instead of delegating validation to Date.parse(), which accepts
+// implementation-defined inputs and normalizes overflow dates. Accepted forms
+// are an ISO calendar date (UTC midnight) or an ISO date-time with an explicit
+// UTC/offset designator. Shared by both bounds since they take identical input.
+function parseFeedDateParam(value) {
   const raw = String(value);
   const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
   if (dateOnly) {
@@ -558,7 +559,7 @@ export async function handleFeedRequest(request, env, url, deps = {}) {
   let sinceMs = null;
   const sinceParam = url.searchParams.get("since");
   if (sinceParam != null) {
-    sinceMs = parseSinceParam(sinceParam);
+    sinceMs = parseFeedDateParam(sinceParam);
     if (Number.isNaN(sinceMs)) {
       return fail(
         "invalid_since",
@@ -573,7 +574,7 @@ export async function handleFeedRequest(request, env, url, deps = {}) {
   let untilMs = null;
   const untilParam = url.searchParams.get("until");
   if (untilParam != null) {
-    untilMs = parseSinceParam(untilParam);
+    untilMs = parseFeedDateParam(untilParam);
     if (Number.isNaN(untilMs)) {
       return fail(
         "invalid_until",
@@ -699,5 +700,8 @@ export const __test = {
   filterByTag,
   filterSince,
   filterUntil,
-  parseSinceParam,
+  parseFeedDateParam,
+  // Back-compat alias: existing tests/imports referenced parseSinceParam before
+  // the helper was generalized to cover `?until=` as well.
+  parseSinceParam: parseFeedDateParam,
 };
