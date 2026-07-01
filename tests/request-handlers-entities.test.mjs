@@ -1628,6 +1628,43 @@ describe("handleAccount", () => {
     assert.equal(body.meta.source, "chain-events");
   });
 
+  test("exposes x-metagraph-artifact-source matching meta.source", async () => {
+    const res = await handleAccount(
+      req(`/api/v1/accounts/${SS58}`),
+      emptyEnv(),
+      SS58,
+    );
+    const body = await json(res);
+    assert.equal(body.meta.source, "chain-events");
+    assert.equal(
+      res.headers.get("x-metagraph-artifact-source"),
+      body.meta.source,
+    );
+  });
+
+  test("304 still carries x-metagraph-artifact-source", async () => {
+    const first = await handleAccount(
+      req(`/api/v1/accounts/${SS58}`),
+      emptyEnv(),
+      SS58,
+    );
+    const etag = first.headers.get("etag");
+    assert.ok(etag);
+    const second = await handleAccount(
+      new Request(`https://api.metagraph.sh/api/v1/accounts/${SS58}`, {
+        headers: { "if-none-match": etag },
+      }),
+      emptyEnv(),
+      SS58,
+    );
+    assert.equal(second.status, 304);
+    assert.equal(
+      second.headers.get("x-metagraph-artifact-source"),
+      "chain-events",
+    );
+    assert.equal(second.headers.get("etag"), etag);
+  });
+
   test("happy path aggregates account_events + neurons + extrinsics activity", async () => {
     const { env } = dbWith({
       agg: {
@@ -2957,6 +2994,55 @@ describe("handleBlock", () => {
     );
     assert.ok(idx !== -1, "expected a block_hash lookup");
     assert.equal(captures.params[idx][0], lowerHash);
+  });
+
+  test("uses the static cache profile when the block resolves", async () => {
+    const { env } = dbWith({
+      blockDetail: blockRow(),
+      blockNeighbors: { prev: 1230, next: 1240 },
+    });
+    const res = await handleBlock(
+      req(`/api/v1/blocks/${BLOCK_NUM}`),
+      env,
+      String(BLOCK_NUM),
+    );
+    assert.match(res.headers.get("cache-control"), /max-age=600/);
+    assert.equal(res.headers.get("x-metagraph-cache-profile"), "static");
+  });
+
+  test("keeps the short cache profile when the block is unknown", async () => {
+    const res = await handleBlock(
+      req(`/api/v1/blocks/${BLOCK_NUM}`),
+      emptyEnv(),
+      String(BLOCK_NUM),
+    );
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("cache-control"), /max-age=60/);
+    assert.equal(res.headers.get("x-metagraph-cache-profile"), "short");
+  });
+
+  test("still emits a 304 for a resolved block when If-None-Match matches", async () => {
+    const { env } = dbWith({
+      blockDetail: blockRow(),
+      blockNeighbors: { prev: 1230, next: 1240 },
+    });
+    const first = await handleBlock(
+      req(`/api/v1/blocks/${BLOCK_NUM}`),
+      env,
+      String(BLOCK_NUM),
+    );
+    const etag = first.headers.get("etag");
+    assert.ok(etag);
+    const second = await handleBlock(
+      new Request(`https://api.metagraph.sh/api/v1/blocks/${BLOCK_NUM}`, {
+        headers: { "if-none-match": etag },
+      }),
+      env,
+      String(BLOCK_NUM),
+    );
+    assert.equal(second.status, 304);
+    assert.match(second.headers.get("cache-control"), /max-age=600/);
+    assert.equal(second.headers.get("etag"), etag);
   });
 });
 

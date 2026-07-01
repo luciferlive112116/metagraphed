@@ -15,6 +15,7 @@ import {
   exposeCustomResponseHeaders,
   ifNoneMatchSatisfied,
   weakEtag,
+  X_METAGRAPH_ARTIFACT_SOURCE_HEADER,
 } from "./http.mjs";
 import {
   latestPointer,
@@ -1690,6 +1691,11 @@ function isMainnetOnlyApiPath(pathname) {
     SUBNET_VALIDATORS_PATH_PATTERN.test(pathname) ||
     SUBNET_EVENTS_PATH_PATTERN.test(pathname) ||
     SUBNET_HISTORY_PATH_PATTERN.test(pathname) ||
+    SUBNET_CONCENTRATION_PATH_PATTERN.test(pathname) ||
+    SUBNET_CONCENTRATION_HISTORY_PATH_PATTERN.test(pathname) ||
+    SUBNET_TURNOVER_PATH_PATTERN.test(pathname) ||
+    SUBNET_STAKE_FLOW_PATH_PATTERN.test(pathname) ||
+    SUBNET_YIELD_PATH_PATTERN.test(pathname) ||
     ACCOUNT_PATH_PATTERN.test(pathname) ||
     ACCOUNT_EVENTS_PATH_PATTERN.test(pathname) ||
     ACCOUNT_HISTORY_PATH_PATTERN.test(pathname) ||
@@ -1697,6 +1703,7 @@ function isMainnetOnlyApiPath(pathname) {
     ACCOUNT_EXTRINSICS_PATH_PATTERN.test(pathname) ||
     ACCOUNT_TRANSFERS_PATH_PATTERN.test(pathname) ||
     ACCOUNT_COUNTERPARTIES_PATH_PATTERN.test(pathname) ||
+    ACCOUNT_STAKE_FLOW_PATH_PATTERN.test(pathname) ||
     ACCOUNT_BALANCE_PATH_PATTERN.test(pathname) ||
     BLOCKS_FEED_PATH_PATTERN.test(pathname) ||
     BLOCK_DETAIL_PATH_PATTERN.test(pathname) ||
@@ -1899,7 +1906,7 @@ async function handleRawArtifactRequest(
   const body = JSON.stringify(data);
   const headers = apiHeaders("standard");
   headers.set("content-type", JSON_CONTENT_TYPE);
-  headers.set("x-metagraph-artifact-source", artifact.source);
+  headers.set(X_METAGRAPH_ARTIFACT_SOURCE_HEADER, artifact.source);
   headers.set("x-metagraph-storage-tier", artifact.storage_tier);
   if (pub) {
     headers.set("x-metagraph-published-at", pub);

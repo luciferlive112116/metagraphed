@@ -27,7 +27,7 @@ import {
   parsePagination,
 } from "../request-params.mjs";
 
-import { errorResponse } from "../http.mjs";
+import { errorResponse, X_METAGRAPH_ARTIFACT_SOURCE_HEADER } from "../http.mjs";
 import {
   contractVersion,
   envelopeResponse,
@@ -675,6 +675,17 @@ async function accountMeta(env, artifactPath, generatedAt) {
   };
 }
 
+// Account routes stamp meta.source but browsers need the CORS-exposed header too.
+async function accountEnvelopeResponse(
+  request,
+  payload,
+  cacheProfile = "short",
+) {
+  return envelopeResponse(request, payload, cacheProfile, {
+    [X_METAGRAPH_ARTIFACT_SOURCE_HEADER]: payload.meta.source,
+  });
+}
+
 // GET /api/v1/accounts/{ss58}/stake-flow: the account's StakeAdded/StakeRemoved flow
 // per subnet over a 7d/30d/90d window — net + gross flow, an HHI concentration of where
 // its flow is focused, and a direction label. account_events-derived (source
@@ -697,7 +708,7 @@ export async function handleAccountStakeFlow(request, env, ss58, url) {
       windowLabel: windowParam,
     },
   );
-  return envelopeResponse(
+  return accountEnvelopeResponse(
     request,
     {
       data,
@@ -716,7 +727,7 @@ export async function handleAccountStakeFlow(request, env, ss58, url) {
 // (neurons, by hotkey). Cold/absent store → schema-stable zero (never 404).
 export async function handleAccount(request, env, ss58) {
   const data = await loadAccountSummary(d1Runner(env), ss58);
-  return envelopeResponse(
+  return accountEnvelopeResponse(
     request,
     {
       data,
@@ -764,7 +775,7 @@ export async function handleAccountEvents(request, env, ss58, url) {
     blockStart: blockStart.value,
     blockEnd: blockEnd.value,
   });
-  return envelopeResponse(
+  return accountEnvelopeResponse(
     request,
     {
       data,
@@ -885,7 +896,7 @@ export async function handleAccountHistory(request, env, ss58, url) {
       ? encodeCursor([Number(last.day.replaceAll("-", "")), last.netuid])
       : null;
   const data = buildAccountHistory(rows, ss58, { limit, offset, nextCursor });
-  return envelopeResponse(
+  return accountEnvelopeResponse(
     request,
     {
       data,
@@ -931,7 +942,7 @@ export async function handleAccountExtrinsics(request, env, ss58, url) {
     blockStart: blockStart.value,
     blockEnd: blockEnd.value,
   });
-  return envelopeResponse(
+  return accountEnvelopeResponse(
     request,
     {
       data,
@@ -995,7 +1006,7 @@ export async function handleAccountTransfers(request, env, ss58, url) {
     blockStart: blockStart.value,
     blockEnd: blockEnd.value,
   });
-  return envelopeResponse(
+  return accountEnvelopeResponse(
     request,
     {
       data,
@@ -1042,7 +1053,7 @@ export async function handleAccountCounterparties(request, env, ss58, url) {
       counterparty,
       { limit },
     );
-    return envelopeResponse(
+    return accountEnvelopeResponse(
       request,
       {
         data,
@@ -1056,7 +1067,7 @@ export async function handleAccountCounterparties(request, env, ss58, url) {
     );
   }
   const data = await loadCounterparties(d1Runner(env), ss58, { limit });
-  return envelopeResponse(
+  return accountEnvelopeResponse(
     request,
     {
       data,
@@ -1074,7 +1085,7 @@ export async function handleAccountCounterparties(request, env, ss58, url) {
 // registered (the cross-subnet footprint), from the neurons tier.
 export async function handleAccountSubnets(request, env, ss58) {
   const data = await loadAccountSubnets(d1Runner(env), ss58);
-  return envelopeResponse(
+  return accountEnvelopeResponse(
     request,
     {
       data,
@@ -1339,6 +1350,9 @@ export async function handleBlock(request, env, ref) {
     next = nbr[0]?.next ?? null;
   }
   const data = buildBlock(rows[0], ref, { prev, next });
+  // Finalized block detail is immutable once resolved; a cold/unknown ref stays
+  // on the short profile so clients re-check when the block lands.
+  const cacheProfile = rows[0] ? "static" : "short";
   return envelopeResponse(
     request,
     {
@@ -1349,7 +1363,7 @@ export async function handleBlock(request, env, ref) {
         data.block?.observed_at ?? null,
       ),
     },
-    "short",
+    cacheProfile,
   );
 }
 
