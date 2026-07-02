@@ -52,7 +52,9 @@ export function isValidSnapshotDate(value) {
 }
 
 function toIso(ms) {
-  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+  if (ms == null) return null;
+  const n = Number(ms);
+  return Number.isFinite(n) && n > 0 ? new Date(n).toISOString() : null;
 }
 
 /**

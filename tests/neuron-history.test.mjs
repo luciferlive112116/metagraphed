@@ -237,6 +237,37 @@ describe("history builders", () => {
     assert.equal(sparse.points[0].block_number, null);
   });
 
+  test("buildNeuronHistory coerces string-typed captured_at cells to ISO timestamps", () => {
+    const out = buildNeuronHistory(
+      [dailyRow({ captured_at: "1780000000000" })],
+      7,
+      3,
+    );
+    assert.equal(
+      out.points[0].captured_at,
+      new Date(1780000000000).toISOString(),
+    );
+  });
+
+  test("buildNeuronHistory preserves null captured_at as null (not epoch 1970)", () => {
+    const out = buildNeuronHistory([dailyRow({ captured_at: null })], 7, 3);
+    assert.equal(out.points[0].captured_at, null);
+  });
+
+  test("buildNeuronHistory drops invalid captured_at strings to null", () => {
+    const out = buildNeuronHistory(
+      [dailyRow({ captured_at: "not-a-timestamp" })],
+      7,
+      3,
+    );
+    assert.equal(out.points[0].captured_at, null);
+  });
+
+  test("buildNeuronHistory drops blank captured_at strings to null (not epoch 1970)", () => {
+    const out = buildNeuronHistory([dailyRow({ captured_at: "" })], 7, 3);
+    assert.equal(out.points[0].captured_at, null);
+  });
+
   test("buildSubnetHistory defaults window + every aggregate to null on sparse rows", () => {
     const out = buildSubnetHistory([{ snapshot_date: "2026-06-20" }], 7);
     assert.equal(out.window, null);
