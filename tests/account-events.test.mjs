@@ -7,6 +7,7 @@ import {
   INGESTED_EVENT_KINDS,
   EVENT_RETENTION_MS,
   formatAccountEvent,
+  formatAccountActivity,
   formatAccountDay,
   formatRegistration,
   buildAccountSummary,
@@ -180,6 +181,19 @@ test("buildAccountTransfers coerces string-typed observed_at cells to ISO timest
     out.transfers[0].observed_at,
     new Date(1750000000000).toISOString(),
   );
+});
+
+test("formatAccountActivity coerces string-typed last_tx_at to ISO timestamps", () => {
+  const out = formatAccountActivity({ last_tx_at: "1750000000000" }, []);
+  assert.equal(out.last_tx_at, new Date(1750000000000).toISOString());
+});
+
+test("buildAccountSummary coerces string-typed first/last seen timestamps", () => {
+  const out = buildAccountSummary("5Hk", {
+    agg: { fo: "1750000000000", lo: "1750009000000" },
+  });
+  assert.equal(out.first_seen_at, new Date(1750000000000).toISOString());
+  assert.equal(out.last_seen_at, new Date(1750009000000).toISOString());
 });
 
 test("formatAccountEvent coerces string-typed netuid and uid cells to Numbers", () => {
