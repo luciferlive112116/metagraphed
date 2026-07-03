@@ -7,7 +7,6 @@ import {
 import {
   STAKE_ADDED_KIND,
   STAKE_REMOVED_KIND,
-  DEFAULT_STAKE_FLOW_WINDOW,
 } from "../src/stake-flow.mjs";
 import { handleRequest } from "../workers/api.mjs";
 import { createLocalArtifactEnv } from "../scripts/lib.mjs";
@@ -89,7 +88,7 @@ describe("GET /api/v1/chain/stake-flow", () => {
     return {
       ...createLocalArtifactEnv(),
       METAGRAPH_HEALTH_DB: {
-        prepare(sql) {
+        prepare(_sql) {
           return {
             bind() {
               return {
