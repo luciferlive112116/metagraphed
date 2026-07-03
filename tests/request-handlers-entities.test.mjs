@@ -4356,17 +4356,17 @@ describe("handleExtrinsics", () => {
   test("?format=json keeps the JSON envelope even when Accept asks for CSV", async () => {
     const { env } = dbWith({ extrinsics: [extrinsicRow()] });
     const res = await handleExtrinsics(
-      new Request("https://api.metagraph.sh/api/v1/extrinsics?format=json&limit=10", {
-        headers: { accept: "text/csv" },
-      }),
+      new Request(
+        "https://api.metagraph.sh/api/v1/extrinsics?format=json&limit=10",
+        {
+          headers: { accept: "text/csv" },
+        },
+      ),
       env,
       url("/api/v1/extrinsics?format=json&limit=10"),
     );
     assert.equal(res.status, 200);
-    assert.match(
-      res.headers.get("content-type") || "",
-      /application\/json/,
-    );
+    assert.match(res.headers.get("content-type") || "", /application\/json/);
     const body = await json(res);
     assert.equal(body.ok, true);
     assert.equal(body.data.extrinsic_count, 1);
