@@ -24,6 +24,14 @@ const patterns = [
     name: "github token",
     regex: /(?:gh[opsur]|github_pat)_[A-Za-z0-9_]+/,
   },
+  // GitLab personal access token: the routable `glpat-` prefix + 20+ URL-safe
+  // base64 chars. The GitLab analog of the github-token rule above and an equally
+  // leakable credential; its distinctive fixed prefix is matched by none of the
+  // other token rules (the `sk-`/`xox`/`gh` prefixes never start `glpat-`).
+  {
+    name: "gitlab personal access token",
+    regex: /glpat-[A-Za-z0-9_-]{20,}/,
+  },
   { name: "openai-style token", regex: /sk-[A-Za-z0-9]{20,}/ },
   { name: "slack-style token", regex: /xox[baprs]-[A-Za-z0-9-]+/ },
   // AWS access key id: AKIA (long-term) / ASIA (temporary STS) + 16 upper-alnum.

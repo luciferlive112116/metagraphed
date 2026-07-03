@@ -219,6 +219,20 @@ describe("captured-fixture body scan", () => {
     }
   });
 
+  test("flags a bare GitLab personal access token", async () => {
+    // The routable `glpat-` prefix + 20+ URL-safe chars is the GitLab analog of a
+    // leaked GitHub token; none of the other token rules (sk-/xox/gh) catch it.
+    // Assemble the prefix + shared body at runtime so the source never commits a
+    // contiguous token-shaped literal (which secret scanners flag in the diff).
+    const token = `glpat-${"abcdefghijklmnopqrst"}`;
+    await fs.writeFile(TEST_PUBLIC_PATH, `${token}\n`, "utf8");
+    const output = runScanOutput();
+    assert.ok(
+      output.includes(`${TEST_PUBLIC_FILE}:1: gitlab personal access token`),
+      `GitLab personal access token must be flagged; got:\n${output}`,
+    );
+  });
+
   test("flags a link-local cloud-metadata URL as a private/loopback leak", async () => {
     // 169.254.169.254 is the AWS/GCP metadata endpoint — the canonical SSRF /
     // credential-theft target and unsafe per lib.mjs isUnsafeUrl, so a leaked URL
