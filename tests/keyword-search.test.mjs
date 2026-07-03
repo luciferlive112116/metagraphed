@@ -47,6 +47,14 @@ describe("queryTerms", () => {
       Array.from({ length: MAX_QUERY_TERMS }, (_, i) => `t${i}`),
     );
   });
+
+  test("preserves first-seen term order (not alphabetical)", () => {
+    assert.deepEqual(queryTerms("zebra apple mango"), [
+      "zebra",
+      "apple",
+      "mango",
+    ]);
+  });
 });
 
 describe("keywordScore — substring noise is gone (whole-word / prefix only)", () => {
@@ -148,6 +156,29 @@ describe("keywordScore — precision boosts", () => {
       "Art Engine",
     ]);
   });
+
+  test("FULL_COVERAGE_BOOST adds 2 when every term matches (#2573)", () => {
+    const full = {
+      name: "Stable Diffusion",
+      slug: "sd",
+      text: ["image", "generation"],
+    };
+    const partial = { name: "Art Engine", slug: "art", text: ["image"] };
+    // Two text hits (1+1) + FULL_COVERAGE_BOOST (2) = 4; one text hit = 1.
+    assert.equal(keywordScore(full, queryTerms("image generation")), 4);
+    assert.equal(keywordScore(partial, queryTerms("image generation")), 1);
+  });
+
+  test("EXACT_NAME_BOOST fires on slug when name tokens differ (#2573)", () => {
+    const doc = { name: "Bitcoin Network", slug: "bitcoin", text: [] };
+    // name weight (3) + full coverage (2) + slug exact boost (5) = 10
+    assert.equal(keywordScore(doc, queryTerms("bitcoin")), 10);
+    const withoutSlugBoost = { name: "Bitcoin Network", slug: "btc", text: [] };
+    assert.ok(
+      keywordScore(doc, queryTerms("bitcoin")) >
+        keywordScore(withoutSlugBoost, queryTerms("bitcoin")),
+    );
+  });
 });
 
 describe("keywordScore — non-matches and edge inputs", () => {
@@ -160,6 +191,9 @@ describe("keywordScore — non-matches and edge inputs", () => {
     const doc = { name: "Compute", slug: "compute", text: ["gpu"] };
     assert.equal(keywordScore(doc, []), 0);
     assert.equal(keywordScore(doc, undefined), 0);
+    assert.equal(keywordScore(doc, null), 0);
+    assert.equal(keywordScore(doc, "gpu"), 0);
+    assert.equal(keywordScore(doc, 42), 0);
   });
 
   test("missing fields are tolerated", () => {
