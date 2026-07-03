@@ -3401,6 +3401,126 @@
         ],
         "type": "object"
       },
+      "ChainTurnoverArtifact": {
+        "additionalProperties": true,
+        "description": "Network-wide validator-set & registration turnover leaderboard aggregated across every subnet's neuron_daily boundary snapshots over a 7d/30d/90d window: rolled-up validators entered/exited, UID deregistrations, mean stability score, and a ranked per-subnet list. The network companion of SubnetTurnoverArtifact and the stability lens alongside subnet-movers.",
+        "properties": {
+          "comparable_subnet_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "end_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mean_stability_score": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "type": "integer"
+          },
+          "sort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subnet_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "subnets": {
+            "items": {
+              "$ref": "#/components/schemas/ChainTurnoverSubnetRow"
+            },
+            "type": "array"
+          },
+          "uids_deregistered": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "validators_entered": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "validators_exited": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "window": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "subnet_count",
+          "subnets"
+        ],
+        "type": "object"
+      },
+      "ChainTurnoverSubnetRow": {
+        "additionalProperties": true,
+        "properties": {
+          "comparable": {
+            "type": "boolean"
+          },
+          "netuid": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "neurons_end": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "neurons_start": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stability_score": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "uids_deregistered": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "validator_retention": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "validators_entered": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "validators_exited": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "netuid",
+          "comparable"
+        ],
+        "type": "object"
+      },
       "ChangelogArtifact": {
         "allOf": [
           {
@@ -20912,6 +21032,179 @@
           }
         },
         "summary": "Fetch network-wide native-TAO transfer analytics over a 7d or 30d window: total Balances.Transfer volume + count, distinct senders/receivers, the top senders and receivers ranked by volume (?limit, <=100), and the top senders' share of total volume. Computed live from the account_events Transfer feed; schema-stable zeros + empty leaderboards when cold.",
+        "tags": [
+          "chain",
+          "analytics"
+        ]
+      }
+    },
+    "/api/v1/chain/turnover": {
+      "get": {
+        "operationId": "chainTurnover",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "enum": [
+                "stability",
+                "churn",
+                "validators_entered",
+                "validators_exited",
+                "uids_deregistered"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "comparable_subnet_count": 1,
+                    "end_date": "example",
+                    "mean_stability_score": 100,
+                    "schema_version": 1,
+                    "sort": "example",
+                    "start_date": "example",
+                    "subnet_count": 1,
+                    "subnets": [
+                      {
+                        "comparable": false,
+                        "netuid": 7
+                      }
+                    ],
+                    "uids_deregistered": 1,
+                    "validators_entered": 1,
+                    "validators_exited": 1,
+                    "window": "30d"
+                  },
+                  "meta": {
+                    "artifact_path": "example",
+                    "cache": "short",
+                    "contract_version": "2026-06-29.1",
+                    "generated_at": "2026-06-01T00:00:00.000Z",
+                    "pagination": {
+                      "collection": "example",
+                      "cursor": 1,
+                      "limit": 1,
+                      "next_cursor": 1,
+                      "order": "asc",
+                      "returned": 1,
+                      "sort": "example",
+                      "total": 1
+                    },
+                    "published_at": "2026-06-01T00:00:00.000Z",
+                    "source": "live-cron-prober",
+                    "stale_contract": {
+                      "built_under": "example",
+                      "live": "example"
+                    }
+                  },
+                  "ok": true,
+                  "schema_version": 1
+                },
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelope"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ChainTurnoverArtifact"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Canonical artifact wrapped in the Metagraphed API envelope.",
+            "headers": {
+              "cache-control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "etag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "x-metagraph-contract-version": {
+                "$ref": "#/components/headers/ContractVersion"
+              }
+            }
+          },
+          "304": {
+            "description": "ETag matched and the cached response is still valid."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Query parameters were malformed or unsupported."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Artifact or API route was not found."
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "HTTP method is not supported."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected backend error."
+          }
+        },
+        "summary": "Fetch network-wide validator-set & registration turnover: every subnet ranked by its churn between the window's start/end neuron_daily snapshots, with rolled-up network totals. ?window=7d|30d|90d (default 30d); ?sort=stability|churn|validators_entered|validators_exited|uids_deregistered (default stability, lowest first); ?limit=1-100 (default 20). Computed live from the neuron_daily rollup; schema-stable empty leaderboard when cold.",
         "tags": [
           "chain",
           "analytics"

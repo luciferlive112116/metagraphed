@@ -3387,6 +3387,126 @@
         ],
         "type": "object"
       },
+      "ChainTurnoverArtifact": {
+        "additionalProperties": true,
+        "description": "Network-wide validator-set & registration turnover leaderboard aggregated across every subnet's neuron_daily boundary snapshots over a 7d/30d/90d window: rolled-up validators entered/exited, UID deregistrations, mean stability score, and a ranked per-subnet list. The network companion of SubnetTurnoverArtifact and the stability lens alongside subnet-movers.",
+        "properties": {
+          "comparable_subnet_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "end_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mean_stability_score": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "type": "integer"
+          },
+          "sort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subnet_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "subnets": {
+            "items": {
+              "$ref": "#/components/schemas/ChainTurnoverSubnetRow"
+            },
+            "type": "array"
+          },
+          "uids_deregistered": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "validators_entered": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "validators_exited": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "window": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "subnet_count",
+          "subnets"
+        ],
+        "type": "object"
+      },
+      "ChainTurnoverSubnetRow": {
+        "additionalProperties": true,
+        "properties": {
+          "comparable": {
+            "type": "boolean"
+          },
+          "netuid": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "neurons_end": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "neurons_start": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stability_score": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "uids_deregistered": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "validator_retention": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "validators_entered": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "validators_exited": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "netuid",
+          "comparable"
+        ],
+        "type": "object"
+      },
       "ChangelogArtifact": {
         "allOf": [
           {

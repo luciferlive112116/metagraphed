@@ -95,6 +95,15 @@ import {
 } from "../../src/concentration.mjs";
 import { loadChainPerformance } from "../../src/chain-performance.mjs";
 import {
+  loadChainTurnover,
+  CHAIN_TURNOVER_WINDOWS,
+  DEFAULT_CHAIN_TURNOVER_WINDOW,
+  CHAIN_TURNOVER_SORTS,
+  DEFAULT_CHAIN_TURNOVER_SORT,
+  CHAIN_TURNOVER_LIMIT_DEFAULT,
+  CHAIN_TURNOVER_LIMIT_MAX,
+} from "../../src/chain-turnover.mjs";
+import {
   PERFORMANCE_READ_COLUMNS,
   buildSubnetPerformance,
 } from "../../src/subnet-performance.mjs";
@@ -645,6 +654,54 @@ export async function handleChainPerformance(request, env, url) {
   );
 }
 
+// GET /api/v1/chain/turnover?window=7d|30d|90d&sort=stability|churn|...&limit=20:
+// network-wide validator-set turnover — every subnet ranked by its churn between
+// the window's global start/end neuron_daily snapshots, with rolled-up network
+// totals. The network companion of /subnets/{netuid}/turnover and the stability
+// lens alongside /subnets/movers.
+export async function handleChainTurnover(request, env, url) {
+  const validationError = validateQueryParams(url, ["window", "sort", "limit"]);
+  if (validationError) return analyticsQueryError(validationError);
+  const windowParam =
+    url.searchParams.get("window") || DEFAULT_CHAIN_TURNOVER_WINDOW;
+  if (!Object.hasOwn(CHAIN_TURNOVER_WINDOWS, windowParam)) {
+    return analyticsQueryError({
+      parameter: "window",
+      message: unsupportedWindowMessage(windowParam, CHAIN_TURNOVER_WINDOWS),
+    });
+  }
+  const sortParam = url.searchParams.get("sort") || DEFAULT_CHAIN_TURNOVER_SORT;
+  if (!CHAIN_TURNOVER_SORTS.includes(sortParam)) {
+    return analyticsQueryError({
+      parameter: "sort",
+      message: `"${sortParam}" is not a supported sort. Supported: ${CHAIN_TURNOVER_SORTS.join(", ")}.`,
+    });
+  }
+  const limit = parseBoundedIntParam(url, "limit", {
+    def: CHAIN_TURNOVER_LIMIT_DEFAULT,
+    min: 1,
+    max: CHAIN_TURNOVER_LIMIT_MAX,
+  });
+  if (limit.error) return analyticsQueryError(limit.error);
+  const data = await loadChainTurnover(d1Runner(env), {
+    windowLabel: windowParam,
+    sort: sortParam,
+    limit: limit.value,
+  });
+  return envelopeResponse(
+    request,
+    {
+      data,
+      meta: await metagraphMeta(
+        env,
+        "/metagraph/chain/turnover.json",
+        data.end_date,
+      ),
+    },
+    "short",
+  );
+}
+
 // Shared helper: build a canonical edge-cache key for any windowed route by
 // normalising the ?window= query parameter through the route-specific parse
 // function, so that an omitted window and an explicit default-value window map
@@ -701,6 +758,29 @@ export function canonicalSubnetStakeFlowCachePath(url) {
     path += `&direction=${encodeURIComponent(direction)}`;
   }
   return path;
+}
+
+// Canonical edge-cache key for the chain-turnover route. window/sort/limit behave
+// like the cross-subnet movers sibling.
+export function canonicalChainTurnoverCachePath(url) {
+  const validationError = validateQueryParams(url, ["window", "sort", "limit"]);
+  if (validationError) return `${url.pathname}${url.search}`;
+  const windowParam =
+    url.searchParams.get("window") || DEFAULT_CHAIN_TURNOVER_WINDOW;
+  if (!Object.hasOwn(CHAIN_TURNOVER_WINDOWS, windowParam)) {
+    return `${url.pathname}${url.search}`;
+  }
+  const sortParam = url.searchParams.get("sort") || DEFAULT_CHAIN_TURNOVER_SORT;
+  if (!CHAIN_TURNOVER_SORTS.includes(sortParam)) {
+    return `${url.pathname}${url.search}`;
+  }
+  const limit = parseBoundedIntParam(url, "limit", {
+    def: CHAIN_TURNOVER_LIMIT_DEFAULT,
+    min: 1,
+    max: CHAIN_TURNOVER_LIMIT_MAX,
+  });
+  if (limit.error) return `${url.pathname}${url.search}`;
+  return `${url.pathname}?window=${encodeURIComponent(windowParam)}&sort=${encodeURIComponent(sortParam)}&limit=${limit.value}`;
 }
 
 // Canonical edge-cache key for the cross-subnet movers route: window/sort/limit, each

@@ -1169,6 +1169,12 @@ export const PUBLIC_ARTIFACTS = [
     "ChainPerformanceArtifact",
   ),
   artifact(
+    "chain-turnover",
+    "/metagraph/chain/turnover.json",
+    "Network-wide validator-set & registration turnover leaderboard: every subnet ranked by its churn between the window's global start/end neuron_daily snapshots, with rolled-up network totals (validators entered/exited, UID deregistrations, mean stability score), computed live from the neuron_daily D1 rollup at /api/v1/chain/turnover (no static file).",
+    "ChainTurnoverArtifact",
+  ),
+  artifact(
     "subnet-uptime",
     "/metagraph/subnets/{netuid}/uptime.json",
     "Long-term daily uptime history per operational surface for one subnet (90d/1y window), served live from the surface_uptime_daily D1 rollup (no static file).",
@@ -2445,6 +2451,33 @@ export const API_ROUTES = [
     "short",
     ["chain", "analytics"],
     [],
+    [],
+  ),
+  route(
+    "chain-turnover",
+    "GET",
+    "/api/v1/chain/turnover",
+    "/metagraph/chain/turnover.json",
+    "Fetch network-wide validator-set & registration turnover: every subnet ranked by its churn between the window's start/end neuron_daily snapshots, with rolled-up network totals. ?window=7d|30d|90d (default 30d); ?sort=stability|churn|validators_entered|validators_exited|uids_deregistered (default stability, lowest first); ?limit=1-100 (default 20). Computed live from the neuron_daily rollup; schema-stable empty leaderboard when cold.",
+    "short",
+    ["chain", "analytics"],
+    [
+      { name: "window", schema: { type: "string", enum: ["7d", "30d", "90d"] } },
+      {
+        name: "sort",
+        schema: {
+          type: "string",
+          enum: [
+            "stability",
+            "churn",
+            "validators_entered",
+            "validators_exited",
+            "uids_deregistered",
+          ],
+        },
+      },
+      { name: "limit", schema: { type: "integer", minimum: 1, maximum: 100 } },
+    ],
     [],
   ),
   route(

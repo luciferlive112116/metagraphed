@@ -78,6 +78,7 @@ import {
   handleSubnetConcentrationHistory,
   handleChainConcentration,
   handleChainPerformance,
+  handleChainTurnover,
   canonicalSubnetHistoryCachePath,
   canonicalSubnetConcentrationHistoryCachePath,
   handleSubnetTurnover,
@@ -88,6 +89,7 @@ import {
   handleSubnetPerformance,
   handleSubnetMovers,
   canonicalSubnetMoversCachePath,
+  canonicalChainTurnoverCachePath,
   handleGlobalValidators,
   canonicalGlobalValidatorsCachePath,
   canonicalSubnetMetagraphCachePath,
@@ -1714,6 +1716,18 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         (edgeEnv) => readNeuronsCacheStamp(edgeEnv),
       );
     }
+    // GET /api/v1/chain/turnover: network-wide validator churn leaderboard —
+    // edge-cache busts on the end snapshot date (like subnets/movers).
+    if (resolved.url.pathname === "/api/v1/chain/turnover") {
+      return withEdgeCache(
+        request,
+        ctx,
+        env,
+        "chain-turnover",
+        () => handleChainTurnover(request, env, resolved.url),
+        canonicalChainTurnoverCachePath(resolved.url),
+      );
+    }
     // Network-wide economics time series (#1307): deterministic per cron snapshot
     // (GROUP-BY-day over subnet_snapshots) — edge-cache on last_run_at like the
     // sibling history/trajectory routes; ?window rides the search into the key.
@@ -1775,6 +1789,7 @@ function isMainnetOnlyApiPath(pathname) {
     pathname === "/api/v1/chain/transfers" ||
     pathname === "/api/v1/chain/concentration" ||
     pathname === "/api/v1/chain/performance" ||
+    pathname === "/api/v1/chain/turnover" ||
     pathname === "/api/v1/economics/trends" ||
     pathname.startsWith("/api/v1/webhooks/") ||
     BULK_TRENDS_PATH_PATTERN.test(pathname) ||

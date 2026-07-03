@@ -525,6 +525,15 @@ const checks = [
     },
   ],
   [
+    "/api/v1/chain/turnover",
+    (body) => {
+      assert.equal(body.data.schema_version, 1);
+      assert.equal(typeof body.data.subnet_count, "number");
+      assert.equal(Array.isArray(body.data.subnets), true);
+      assert.equal(typeof body.data.validators_entered, "number");
+    },
+  ],
+  [
     "/api/v1/chain/concentration",
     (body) => {
       assert.equal(body.data.schema_version, 1);

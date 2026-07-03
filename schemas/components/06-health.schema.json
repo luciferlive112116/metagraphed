@@ -952,6 +952,45 @@
         },
         "additionalProperties": true
       },
+      "ChainTurnoverSubnetRow": {
+        "type": "object",
+        "required": ["netuid", "comparable"],
+        "properties": {
+          "netuid": { "type": "integer", "minimum": 0 },
+          "comparable": { "type": "boolean" },
+          "stability_score": { "type": ["integer", "null"] },
+          "validators_entered": { "type": "integer", "minimum": 0 },
+          "validators_exited": { "type": "integer", "minimum": 0 },
+          "validator_retention": { "type": ["number", "null"] },
+          "uids_deregistered": { "type": "integer", "minimum": 0 },
+          "neurons_start": { "type": "integer", "minimum": 0 },
+          "neurons_end": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": true
+      },
+      "ChainTurnoverArtifact": {
+        "type": "object",
+        "description": "Network-wide validator-set & registration turnover leaderboard aggregated across every subnet's neuron_daily boundary snapshots over a 7d/30d/90d window: rolled-up validators entered/exited, UID deregistrations, mean stability score, and a ranked per-subnet list. The network companion of SubnetTurnoverArtifact and the stability lens alongside subnet-movers.",
+        "required": ["schema_version", "subnet_count", "subnets"],
+        "properties": {
+          "schema_version": { "type": "integer" },
+          "window": { "type": ["string", "null"] },
+          "start_date": { "type": ["string", "null"] },
+          "end_date": { "type": ["string", "null"] },
+          "sort": { "type": ["string", "null"] },
+          "subnet_count": { "type": "integer", "minimum": 0 },
+          "comparable_subnet_count": { "type": "integer", "minimum": 0 },
+          "validators_entered": { "type": "integer", "minimum": 0 },
+          "validators_exited": { "type": "integer", "minimum": 0 },
+          "uids_deregistered": { "type": "integer", "minimum": 0 },
+          "mean_stability_score": { "type": ["integer", "null"] },
+          "subnets": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ChainTurnoverSubnetRow" }
+          }
+        },
+        "additionalProperties": true
+      },
       "SubnetConcentrationHistoryArtifact": {
         "type": "object",
         "description": "Per-day stake & emission concentration trend for one subnet (newest first) over a 7d/30d/90d window, computed live from the neuron_daily D1 rollup.",

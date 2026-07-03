@@ -135,6 +135,15 @@ import { loadSubnetYield } from "./subnet-yield.mjs";
 import { loadSubnetPerformance } from "./subnet-performance.mjs";
 import { loadChainPerformance } from "./chain-performance.mjs";
 import {
+  loadChainTurnover,
+  CHAIN_TURNOVER_WINDOWS,
+  DEFAULT_CHAIN_TURNOVER_WINDOW,
+  CHAIN_TURNOVER_SORTS,
+  DEFAULT_CHAIN_TURNOVER_SORT,
+  CHAIN_TURNOVER_LIMIT_DEFAULT,
+  CHAIN_TURNOVER_LIMIT_MAX,
+} from "./chain-turnover.mjs";
+import {
   loadSubnetStakeFlow,
   STAKE_FLOW_WINDOWS,
   DEFAULT_STAKE_FLOW_WINDOW,
@@ -192,7 +201,7 @@ const MCP_LATEST_PROTOCOL = MCP_PROTOCOL_VERSIONS[0];
 //   - change or remove a tool's I/O       → MAJOR
 //   - behavioral-only fix (no I/O change) → PATCH
 // Reported in serverInfo.version (initialize) + the generated server-card.json.
-export const MCP_SERVER_VERSION = "1.20.0";
+export const MCP_SERVER_VERSION = "1.21.0";
 
 // Window labels accepted by get_chain_transfers — derived from the loader constant
 // so input/output schemas and runtime validation cannot drift.
@@ -299,7 +308,8 @@ export const MCP_INSTRUCTIONS =
   "native-TAO transfer volume plus top senders/receivers, get_chain_concentration " +
   "the network-wide stake/emission decentralization scorecard across all subnets, " +
   "get_chain_performance the network-wide reward-distribution and trust/consensus " +
-  "score spread across all subnets, " +
+  "score spread across all subnets, get_chain_turnover the network-wide " +
+  "validator churn leaderboard ranked by subnet stability, " +
   "get_network_activity the daily " +
   "network-activity time series (blocks/extrinsics/events/signers), and " +
   "get_chain_activity the recent pallet.method event distribution, and " +
@@ -1893,6 +1903,69 @@ export const MCP_TOOLS = [
     },
     async handler(_args, ctx) {
       return loadChainPerformance(mcpD1Runner(ctx));
+    },
+  },
+  {
+    name: "get_chain_turnover",
+    title: "Get network-wide validator turnover leaderboard",
+    description:
+      "Fetch the network-wide validator-set & registration turnover " +
+      "leaderboard over the requested window (7d, 30d, or 90d; default 30d): " +
+      "every subnet ranked by its churn between the window's global start/end " +
+      "neuron_daily snapshots, with rolled-up network totals (validators " +
+      "entered/exited, UID deregistrations, mean stability score). Sort by " +
+      "stability (default, lowest/most unstable first), churn, validators_entered, " +
+      "validators_exited, or uids_deregistered; cap with limit (1-100, default 20). " +
+      "The network companion of get_subnet_turnover and the stability lens " +
+      "alongside get_subnet_movers. Mirrors GET /api/v1/chain/turnover.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        window: {
+          type: "string",
+          enum: Object.keys(CHAIN_TURNOVER_WINDOWS),
+          description: `Comparison window (default ${DEFAULT_CHAIN_TURNOVER_WINDOW}).`,
+        },
+        sort: {
+          type: "string",
+          enum: CHAIN_TURNOVER_SORTS,
+          description: `Rank metric (default ${DEFAULT_CHAIN_TURNOVER_SORT}).`,
+        },
+        limit: {
+          type: "integer",
+          description: `Max subnets to return (1-${CHAIN_TURNOVER_LIMIT_MAX}, default ${CHAIN_TURNOVER_LIMIT_DEFAULT}).`,
+          minimum: 1,
+          maximum: CHAIN_TURNOVER_LIMIT_MAX,
+        },
+      },
+      additionalProperties: false,
+    },
+    async handler(args, ctx) {
+      const window =
+        optionalString(args, "window") ?? DEFAULT_CHAIN_TURNOVER_WINDOW;
+      if (!Object.hasOwn(CHAIN_TURNOVER_WINDOWS, window)) {
+        throw toolError(
+          "invalid_params",
+          `window must be one of: ${Object.keys(CHAIN_TURNOVER_WINDOWS).join(", ")}.`,
+        );
+      }
+      const sort = optionalString(args, "sort") ?? DEFAULT_CHAIN_TURNOVER_SORT;
+      if (!CHAIN_TURNOVER_SORTS.includes(sort)) {
+        throw toolError(
+          "invalid_params",
+          `sort must be one of: ${CHAIN_TURNOVER_SORTS.join(", ")}.`,
+        );
+      }
+      const limit = clampLimit(
+        args?.limit,
+        CHAIN_TURNOVER_LIMIT_DEFAULT,
+        CHAIN_TURNOVER_LIMIT_MAX,
+      );
+      return loadChainTurnover(mcpD1Runner(ctx), {
+        windowLabel: window,
+        sort,
+        limit,
+      });
     },
   },
   {
@@ -5267,6 +5340,38 @@ const TOOL_OUTPUT_SCHEMAS = {
       trust: { type: ["object", "null"] },
       consensus: { type: ["object", "null"] },
       validator_trust: { type: ["object", "null"] },
+    },
+  },
+  get_chain_turnover: {
+    type: "object",
+    additionalProperties: true,
+    required: ["subnet_count", "subnets"],
+    properties: {
+      schema_version: { type: "integer" },
+      window: NULLABLE_STRING,
+      start_date: NULLABLE_STRING,
+      end_date: NULLABLE_STRING,
+      sort: NULLABLE_STRING,
+      subnet_count: { type: "integer" },
+      comparable_subnet_count: { type: "integer" },
+      validators_entered: { type: "integer" },
+      validators_exited: { type: "integer" },
+      uids_deregistered: { type: "integer" },
+      mean_stability_score: { type: ["integer", "null"] },
+      subnets: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: true,
+          properties: {
+            netuid: { type: "integer" },
+            comparable: { type: "boolean" },
+            stability_score: { type: ["integer", "null"] },
+            validators_entered: { type: "integer" },
+            validators_exited: { type: "integer" },
+          },
+        },
+      },
     },
   },
   get_subnet_concentration_history: {

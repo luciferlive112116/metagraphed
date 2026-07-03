@@ -646,6 +646,13 @@
     },
     {
       "contract_version": "2026-07-03.1",
+      "id": "chain-turnover",
+      "path": "/metagraph/chain/turnover.json",
+      "schema_ref": "#/components/schemas/ChainTurnoverArtifact",
+      "storage_tier": "r2"
+    },
+    {
+      "contract_version": "2026-07-03.1",
       "id": "subnet-uptime",
       "path": "/metagraph/subnets/{netuid}/uptime.json",
       "schema_ref": "#/components/schemas/UptimeArtifact",
@@ -5888,6 +5895,51 @@
       "query_collection": null,
       "query_filter_names": [],
       "query_parameters": []
+    },
+    {
+      "artifact_path": "/metagraph/chain/turnover.json",
+      "cache": "short",
+      "description": "Fetch network-wide validator-set & registration turnover: every subnet ranked by its churn between the window's start/end neuron_daily snapshots, with rolled-up network totals. ?window=7d|30d|90d (default 30d); ?sort=stability|churn|validators_entered|validators_exited|uids_deregistered (default stability, lowest first); ?limit=1-100 (default 20). Computed live from the neuron_daily rollup; schema-stable empty leaderboard when cold.",
+      "id": "chain-turnover",
+      "method": "GET",
+      "path": "/api/v1/chain/turnover",
+      "public": true,
+      "query_collection": null,
+      "query_filter_names": [],
+      "query_parameters": [
+        {
+          "name": "window",
+          "schema": {
+            "enum": [
+              "7d",
+              "30d",
+              "90d"
+            ],
+            "type": "string"
+          }
+        },
+        {
+          "name": "sort",
+          "schema": {
+            "enum": [
+              "stability",
+              "churn",
+              "validators_entered",
+              "validators_exited",
+              "uids_deregistered"
+            ],
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "schema": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        }
+      ]
     },
     {
       "artifact_path": "/metagraph/subnets/{netuid}/uptime.json",

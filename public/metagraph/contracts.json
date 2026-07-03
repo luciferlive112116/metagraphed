@@ -831,6 +831,15 @@
     {
       "content_type": "application/json",
       "contract_version": "2026-07-03.1",
+      "description": "Network-wide validator-set & registration turnover leaderboard: every subnet ranked by its churn between the window's global start/end neuron_daily snapshots, with rolled-up network totals (validators entered/exited, UID deregistrations, mean stability score), computed live from the neuron_daily D1 rollup at /api/v1/chain/turnover (no static file).",
+      "id": "chain-turnover",
+      "path": "/metagraph/chain/turnover.json",
+      "schema_ref": "#/components/schemas/ChainTurnoverArtifact",
+      "storage_tier": "r2"
+    },
+    {
+      "content_type": "application/json",
+      "contract_version": "2026-07-03.1",
       "description": "Long-term daily uptime history per operational surface for one subnet (90d/1y window), served live from the surface_uptime_daily D1 rollup (no static file).",
       "id": "subnet-uptime",
       "path": "/metagraph/subnets/{netuid}/uptime.json",

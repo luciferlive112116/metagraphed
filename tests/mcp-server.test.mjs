@@ -5683,6 +5683,23 @@ describe("MCP economics + metagraph data tools", () => {
     assert.equal(out.validator_trust.count, 1);
   });
 
+  test("get_chain_turnover returns an empty leaderboard on cold D1", async () => {
+    const res = await callTool("get_chain_turnover", { window: "30d" });
+    const out = res.body.result.structuredContent;
+    assert.equal(res.body.result.isError, false);
+    assert.equal(out.subnet_count, 0);
+    assert.equal(out.subnets.length, 0);
+  });
+
+  test("get_chain_turnover rejects an unsupported sort", async () => {
+    const res = await callTool("get_chain_turnover", {
+      window: "30d",
+      sort: "bogus",
+    });
+    assert.equal(res.body.result.isError, true);
+    assert.match(res.body.result.content[0].text, /sort/);
+  });
+
   test("get_subnet_concentration_history defaults to 30d and returns points", async () => {
     const res = await callTool(
       "get_subnet_concentration_history",
