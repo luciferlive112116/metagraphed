@@ -3631,6 +3631,56 @@ describe("handleBlocks", () => {
     assert.ok(!/WHERE/.test(sql));
     assert.ok(/ORDER BY block_number DESC LIMIT \? OFFSET \?/.test(sql));
   });
+
+  const BLOCKS_CSV_HEADER =
+    "block_number,block_hash,parent_hash,author,extrinsic_count,event_count,spec_version,observed_at";
+
+  test("?format=csv exports filtered block rows (#2528)", async () => {
+    const { env } = dbWith({ blocksFeed: [blockRow()] });
+    const res = await handleBlocks(
+      req("/api/v1/blocks"),
+      env,
+      url("/api/v1/blocks?limit=10&format=csv"),
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/csv; charset=utf-8");
+    assert.equal(
+      res.headers.get("content-disposition"),
+      'attachment; filename="blocks.csv"',
+    );
+    const text = await res.text();
+    const lines = text.split("\r\n");
+    assert.equal(lines[0], BLOCKS_CSV_HEADER);
+    assert.equal(lines[1].split(",")[0], String(BLOCK_NUM));
+    assert.equal(lines[1].split(",")[4], "5");
+    assert.equal(lines[1].split(",")[5], "20");
+    assert.equal(lines[1].split(",")[6], "201");
+    assert.equal(lines[1].split(",")[7], new Date(OBSERVED_AT).toISOString());
+  });
+
+  test("?format=csv emits a header-only export on cold D1", async () => {
+    const res = await handleBlocks(
+      req("/api/v1/blocks"),
+      emptyEnv(),
+      url("/api/v1/blocks?format=csv"),
+    );
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const lines = text.split("\r\n");
+    assert.equal(lines[0], BLOCKS_CSV_HEADER);
+    assert.equal(lines.length, 1);
+  });
+
+  test("rejects an unsupported format value", async () => {
+    const body = await errorJson(
+      await handleBlocks(
+        req("/api/v1/blocks"),
+        emptyEnv(),
+        url("/api/v1/blocks?format=pdf"),
+      ),
+    );
+    assert.equal(body.meta.parameter, "format");
+  });
 });
 
 describe("handleBlock", () => {
