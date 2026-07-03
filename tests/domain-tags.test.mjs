@@ -118,4 +118,68 @@ describe("deriveDomainTags", () => {
     assert.deepEqual(first, ["compute", "media"]);
     assert.equal(first.length, new Set(first).size);
   });
+
+  // One positive keyword per DOMAIN_TAG_RULE — the matrix stays in sync with the
+  // exported vocabulary so a new tag cannot land without a matching example.
+  const DOMAIN_TAG_RULE_CASES = [
+    ["agents", "autonomous agents"],
+    ["compute", "gpu cluster"],
+    ["data", "web scraping pipeline"],
+    ["finance", "defi trading"],
+    ["inference", "llm inference"],
+    ["media", "text-to-speech"],
+    ["prediction", "prediction markets"],
+    ["privacy", "zero-knowledge proof"],
+    ["robotics", "robotics control"],
+    ["science", "drug discovery"],
+    ["search", "semantic search"],
+    ["security", "cyber security"],
+    ["storage", "decentralized storage"],
+    ["training", "model training"],
+  ];
+
+  test("every DOMAIN_TAG rule fires on a representative keyword (#2570)", () => {
+    assert.deepEqual(
+      DOMAIN_TAG_RULE_CASES.map(([tag]) => tag).sort(),
+      DOMAIN_TAGS,
+      "case matrix must cover every exported domain tag",
+    );
+    for (const [tag, description] of DOMAIN_TAG_RULE_CASES) {
+      assert.deepEqual(deriveDomainTags({ description }), [tag], `tag ${tag}`);
+    }
+  });
+
+  test("drops non-string description and additional values", () => {
+    assert.deepEqual(
+      deriveDomainTags({ description: 42, additional: { x: 1 } }),
+      [],
+    );
+    assert.deepEqual(
+      deriveDomainTags({ description: "gpu compute", additional: false }),
+      ["compute"],
+    );
+  });
+
+  test("null-only text input yields no tags", () => {
+    assert.deepEqual(
+      deriveDomainTags({ description: null, additional: null }),
+      [],
+    );
+    assert.deepEqual(deriveDomainTags({}), []);
+  });
+
+  test("non-array categories is ignored", () => {
+    assert.deepEqual(deriveDomainTags({ categories: "finance" }), []);
+    assert.deepEqual(deriveDomainTags({ categories: null }), []);
+  });
+
+  test("deduplicates when text and category derive the same tag", () => {
+    assert.deepEqual(
+      deriveDomainTags({
+        description: "gpu compute",
+        categories: ["Compute"],
+      }),
+      ["compute"],
+    );
+  });
 });
