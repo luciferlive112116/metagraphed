@@ -2164,10 +2164,11 @@ export const API_ROUTES = [
     "GET",
     "/api/v1/accounts/{ss58}/extrinsics",
     "/metagraph/accounts/{ss58}/extrinsics.json",
-    "Fetch the extrinsics this account signed (matched by signer), newest first, computed live from the extrinsics D1 tier. Optional ?block_start/?block_end (block-height range); ?limit (<=1000) / ?offset, or ?cursor= for stable keyset paging. Pass ?format=csv to download the page as CSV.",
+    "Fetch the extrinsics this account signed (matched by signer), newest first, computed live from the extrinsics D1 tier. Optional ?success=true|false narrows to successful or failed extrinsics (mirrors the GET /api/v1/extrinsics feed; an undeterminable success is excluded by either value); ?block_start/?block_end (block-height range); ?limit (<=1000) / ?offset, or ?cursor= for stable keyset paging. Pass ?format=csv to download the page as CSV.",
     "short",
     ["accounts", "analytics"],
     csvRouteQuery([
+      { name: "success", schema: { type: "boolean" } },
       { name: "block_start", schema: { type: "integer", minimum: 0 } },
       { name: "block_end", schema: { type: "integer", minimum: 0 } },
       { name: "limit", schema: { type: "integer", minimum: 1, maximum: 1000 } },

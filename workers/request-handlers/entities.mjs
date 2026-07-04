@@ -1464,6 +1464,7 @@ export async function handleAccountHistory(request, env, ss58, url) {
 // schema-stable zero (never 404).
 export async function handleAccountExtrinsics(request, env, ss58, url) {
   const validationError = validateEntityQuery(url, [
+    "success",
     "block_start",
     "block_end",
     "limit",
@@ -1482,12 +1483,23 @@ export async function handleAccountExtrinsics(request, env, ss58, url) {
     "block_end",
   );
   if (blockEnd.error) return analyticsQueryError(blockEnd.error);
+  // ?success=true|false narrows to successful/failed signed extrinsics; reject any
+  // other value (mirrors the GET /api/v1/extrinsics feed, #2673).
+  const successRaw = url.searchParams.get("success");
+  if (successRaw !== null && successRaw !== "true" && successRaw !== "false") {
+    return analyticsQueryError({
+      parameter: "success",
+      message: "success must be one of: true, false.",
+    });
+  }
   const data = await loadAccountExtrinsics(d1Runner(env), ss58, {
     limit: url.searchParams.get("limit"),
     offset: url.searchParams.get("offset"),
     cursor: url.searchParams.get("cursor"),
     blockStart: blockStart.value,
     blockEnd: blockEnd.value,
+    success:
+      successRaw === "true" ? true : successRaw === "false" ? false : undefined,
   });
   if (csvRequested(url, request)) {
     const csvRows = data.extrinsics.map((extrinsic) => ({

@@ -2531,6 +2531,31 @@ describe("handleAccountExtrinsics", () => {
     assert.deepEqual(captures.params[idx], [SS58, 100, 900, 100, 0]);
   });
 
+  test("rejects an invalid success filter with 400", async () => {
+    const res = await handleAccountExtrinsics(
+      req(`/api/v1/accounts/${SS58}/extrinsics`),
+      emptyEnv(),
+      SS58,
+      url(`/api/v1/accounts/${SS58}/extrinsics?success=maybe`),
+    );
+    const body = await errorJson(res);
+    assert.equal(body.meta.parameter, "success");
+  });
+
+  test("success=true is applied as a bound extrinsics filter", async () => {
+    const { env, captures } = dbWith({ extrinsics: [extrinsicRow()] });
+    await handleAccountExtrinsics(
+      req(`/api/v1/accounts/${SS58}/extrinsics`),
+      env,
+      SS58,
+      url(`/api/v1/accounts/${SS58}/extrinsics?success=true`),
+    );
+    const idx = captures.sql.findIndex((s) => /FROM extrinsics/.test(s));
+    assert.ok(idx !== -1);
+    assert.ok(/AND success = \?/.test(captures.sql[idx]));
+    assert.deepEqual(captures.params[idx], [SS58, 1, 100, 0]);
+  });
+
   test("cursor combines with block range filters and emits next_cursor", async () => {
     const { env, captures } = dbWith({
       extrinsics: [extrinsicRow({ block_number: 150, extrinsic_index: 4 })],

@@ -96,7 +96,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Fetch the extrinsics this account signed (matched by signer), newest first, computed live from the extrinsics D1 tier. Optional ?block_start/?block_end (block-height range); ?limit (<=1000) / ?offset, or ?cursor= for stable keyset paging. Pass ?format=csv to download the page as CSV. */
+        /** Fetch the extrinsics this account signed (matched by signer), newest first, computed live from the extrinsics D1 tier. Optional ?success=true|false narrows to successful or failed extrinsics (mirrors the GET /api/v1/extrinsics feed; an undeterminable success is excluded by either value); ?block_start/?block_end (block-height range); ?limit (<=1000) / ?offset, or ?cursor= for stable keyset paging. Pass ?format=csv to download the page as CSV. */
         get: operations["accountExtrinsics"];
         put?: never;
         post?: never;
@@ -6832,6 +6832,7 @@ export interface operations {
     accountExtrinsics: {
         parameters: {
             query?: {
+                success?: boolean;
                 block_start?: number;
                 block_end?: number;
                 limit?: number;

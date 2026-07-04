@@ -1115,7 +1115,7 @@ export async function loadAccountHistory(
 export async function loadAccountExtrinsics(
   d1,
   ss58,
-  { limit, offset, cursor, blockStart, blockEnd } = {},
+  { limit, offset, cursor, blockStart, blockEnd, success } = {},
 ) {
   const lim = clampLimit(limit, FEED_PAGINATION);
   const off = clampOffset(offset);
@@ -1137,6 +1137,16 @@ export async function loadAccountExtrinsics(
   if (blockEnd != null) {
     sql += " AND block_number <= ?";
     params.push(blockEnd);
+  }
+  // Optional success filter (true|false only; omit for no filter), mirroring the
+  // global GET /api/v1/extrinsics feed. The boolean maps to the D1 success INTEGER
+  // (1/0); a NULL/undeterminable success is excluded by either explicit value.
+  if (success === true) {
+    sql += " AND success = ?";
+    params.push(1);
+  } else if (success === false) {
+    sql += " AND success = ?";
+    params.push(0);
   }
   const cur = decodeCursor(cursor, 2);
   const useCursor = Boolean(cur);

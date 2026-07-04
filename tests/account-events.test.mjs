@@ -935,6 +935,32 @@ test("loadAccountExtrinsics applies the block_start/block_end range as bound par
   assert.deepEqual(captured.params, ["5Hk", 100, 900, 100, 0]);
 });
 
+test("loadAccountExtrinsics applies ?success=true|false as a bound filter", async () => {
+  const run = async (opts) => {
+    let captured;
+    await loadAccountExtrinsics(
+      async (sql, params) => {
+        captured = { sql, params };
+        return [];
+      },
+      "5Hk",
+      opts,
+    );
+    return captured;
+  };
+  // success=true binds the D1 INTEGER 1 after the signer, before limit/offset.
+  const yes = await run({ success: true });
+  assert.ok(/AND success = \?/.test(yes.sql));
+  assert.deepEqual(yes.params, ["5Hk", 1, 100, 0]);
+  // success=false binds 0.
+  const no = await run({ success: false });
+  assert.deepEqual(no.params, ["5Hk", 0, 100, 0]);
+  // Omitting success adds no WHERE condition (no regression on the unfiltered feed).
+  const none = await run({});
+  assert.ok(!/AND success = \?/.test(none.sql));
+  assert.deepEqual(none.params, ["5Hk", 100, 0]);
+});
+
 test("loadAccountExtrinsics short-circuits an inverted block range before D1", async () => {
   let called = false;
   const out = await loadAccountExtrinsics(
