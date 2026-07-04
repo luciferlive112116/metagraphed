@@ -622,6 +622,94 @@ describe("sampleFromSchema", () => {
     assert.notEqual(untouched.network.announcements, 70);
   });
 
+  test("chain registration samples keep registrations-per-registrant consistent", () => {
+    const registrantProps = {
+      distinct_registrants: { type: "integer" },
+      registrations: { type: "integer" },
+      registrations_per_registrant: { type: ["number", "null"] },
+    };
+    const registrationsSchema = {
+      type: "object",
+      required: [
+        "schema_version",
+        "window",
+        "observed_at",
+        "subnet_count",
+        "network",
+        "intensity_distribution",
+        "subnets",
+      ],
+      properties: {
+        schema_version: { type: "integer" },
+        window: { type: "string" },
+        observed_at: { type: "string", format: "date-time" },
+        subnet_count: { type: "integer" },
+        network: {
+          type: "object",
+          required: [
+            "distinct_registrants",
+            "registrations",
+            "registrations_per_registrant",
+          ],
+          properties: registrantProps,
+        },
+        intensity_distribution: {
+          type: ["object", "null"],
+          properties: {
+            count: { type: "integer" },
+            mean: { type: "number" },
+            min: { type: "number" },
+            p25: { type: "number" },
+            median: { type: "number" },
+            p75: { type: "number" },
+            p90: { type: "number" },
+            max: { type: "number" },
+          },
+        },
+        subnets: {
+          type: "array",
+          items: {
+            type: "object",
+            required: [
+              "netuid",
+              "distinct_registrants",
+              "registrations",
+              "registrations_per_registrant",
+            ],
+            properties: { netuid: { type: "integer" }, ...registrantProps },
+          },
+        },
+      },
+    };
+    const sample = s(registrationsSchema, "data");
+
+    // The worked example is internally consistent: each subnet's registrations_per_registrant
+    // equals its NeuronRegistered count divided by its distinct registrants, and the network rollup does the same.
+    for (const subnet of sample.subnets) {
+      assert.equal(
+        subnet.registrations_per_registrant,
+        subnet.registrations / subnet.distinct_registrants,
+      );
+    }
+    assert.equal(
+      sample.network.registrations_per_registrant,
+      sample.network.registrations / sample.network.distinct_registrants,
+    );
+    assert.equal(sample.subnet_count, sample.subnets.length);
+    assert.equal(sample.intensity_distribution.count, sample.subnets.length);
+
+    // A shape whose network lacks registrations_per_registrant is not a registrations artifact and
+    // is left untouched (guard branch).
+    const notRegs = JSON.parse(JSON.stringify(registrationsSchema));
+    delete notRegs.properties.network.properties.registrations_per_registrant;
+    notRegs.properties.network.required =
+      notRegs.properties.network.required.filter(
+        (key) => key !== "registrations_per_registrant",
+      );
+    const untouched = s(notRegs, "data");
+    assert.notEqual(untouched.network.registrations, 70);
+  });
+
   test("chain transfer-pair samples keep the top-pair share consistent", () => {
     const ss58Pattern = "^[1-9A-HJ-NP-Za-km-z]{47,48}$";
     const pairSchema = {

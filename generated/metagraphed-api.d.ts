@@ -531,6 +531,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/chain/registrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch network-wide neuron-registration activity over a 7d or 30d window across the subnets with observed registration activity (subnets with no NeuronRegistered events are absent): a per-subnet leaderboard (NeuronRegistered event count, distinct registrants, and average registrations per registrant) ranked by total registrations, a network rollup with the true distinct registrant count (a hotkey registering on several subnets counts once) and total registrations, and a distribution summary (count, mean, min, p25, median, p75, p90, max) of the per-subnet re-registration intensity. `limit` caps the leaderboard (default 20, max 100). Raw registration demand — the account_events companion to the neuron_daily validator-set churn in GET /api/v1/chain/turnover. Computed live from the account_events NeuronRegistered stream; schema-stable empty block when cold. */
+        get: operations["chainRegistrations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/chain/serving": {
         parameters: {
             query?: never;
@@ -2934,6 +2951,38 @@ export interface components {
             validator_trust?: components["schemas"]["ScoreDistribution"];
         } & {
             [key: string]: unknown;
+        };
+        /** @description Network-wide neuron-registration activity over a 7d/30d window across the subnets with observed registration activity: a per-subnet leaderboard (distinct registrants, NeuronRegistered count, registrations per registrant) plus a network rollup with the true distinct registrant count and a distribution of per-subnet re-registration intensity. Raw registration demand from the account_events NeuronRegistered stream — the companion to the neuron_daily validator-set churn in /api/v1/chain/turnover — served live at /api/v1/chain/registrations (no static file); subnet_count 0 and the leaderboard empty when cold. */
+        ChainRegistrationsArtifact: {
+            /** @description Spread of the per-subnet registrations-per-registrant intensity across the subnets that saw a registration in the window (null when no subnet saw a registration). subnet_count and this distribution cover only subnets with observed NeuronRegistered activity, not every registered subnet. */
+            intensity_distribution: {
+                count: number;
+                max: number;
+                mean: number;
+                median: number;
+                min: number;
+                p25: number;
+                p75: number;
+                p90: number;
+            } | null;
+            /** @description Rollup over the window: the true distinct registrants across all subnets (a hotkey registering on several subnets counts once, so NOT the sum of the per-subnet counts), total NeuronRegistered events, and the network registrations-per-registrant intensity (null when no neuron registered). */
+            network: {
+                distinct_registrants: number;
+                registrations: number;
+                registrations_per_registrant: number | null;
+            };
+            /** Format: date-time */
+            observed_at: string | null;
+            schema_version: number;
+            subnet_count: number;
+            subnets: {
+                distinct_registrants: number;
+                netuid: number;
+                registrations: number;
+                registrations_per_registrant: number | null;
+            }[];
+            /** @enum {string|null} */
+            window: "7d" | "30d" | null;
         };
         /** @description Network-wide axon-serving announcement activity over a 7d/30d window across the subnets with observed serving activity: a per-subnet leaderboard (distinct servers, AxonServed count, announcements per server) plus a network rollup with the true distinct server count and a distribution of per-subnet re-announcement intensity. Served live from the account_events AxonServed stream at /api/v1/chain/serving (no static file); subnet_count 0 and the leaderboard empty when cold. */
         ChainServingArtifact: {
@@ -10225,6 +10274,140 @@ export interface operations {
                      */
                     "application/json": components["schemas"]["SuccessEnvelope"] & {
                         data?: components["schemas"]["ChainPerformanceArtifact"];
+                    };
+                };
+            };
+            /** @description ETag matched and the cached response is still valid. */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Query parameters were malformed or unsupported. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Artifact or API route was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description HTTP method is not supported. */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected backend error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    chainRegistrations: {
+        parameters: {
+            query?: {
+                window?: "7d" | "30d";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Canonical artifact wrapped in the Metagraphed API envelope. */
+            200: {
+                headers: {
+                    "cache-control": components["headers"]["CacheControl"];
+                    etag: components["headers"]["ETag"];
+                    "x-metagraph-contract-version": components["headers"]["ContractVersion"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "intensity_distribution": {
+                     *           "count": 2,
+                     *           "max": 15,
+                     *           "mean": 12.5,
+                     *           "median": 10,
+                     *           "min": 10,
+                     *           "p25": 10,
+                     *           "p75": 15,
+                     *           "p90": 15
+                     *         },
+                     *         "network": {
+                     *           "distinct_registrants": 5,
+                     *           "registrations": 70,
+                     *           "registrations_per_registrant": 14
+                     *         },
+                     *         "observed_at": "2026-06-01T00:00:00.000Z",
+                     *         "schema_version": 1,
+                     *         "subnet_count": 2,
+                     *         "subnets": [
+                     *           {
+                     *             "distinct_registrants": 4,
+                     *             "netuid": 1,
+                     *             "registrations": 40,
+                     *             "registrations_per_registrant": 10
+                     *           },
+                     *           {
+                     *             "distinct_registrants": 2,
+                     *             "netuid": 2,
+                     *             "registrations": 30,
+                     *             "registrations_per_registrant": 15
+                     *           }
+                     *         ],
+                     *         "window": "7d"
+                     *       },
+                     *       "meta": {
+                     *         "artifact_path": "example",
+                     *         "cache": "short",
+                     *         "contract_version": "2026-06-29.1",
+                     *         "generated_at": "2026-06-01T00:00:00.000Z",
+                     *         "pagination": {
+                     *           "collection": "example",
+                     *           "cursor": 1,
+                     *           "limit": 1,
+                     *           "next_cursor": 1,
+                     *           "order": "asc",
+                     *           "returned": 1,
+                     *           "sort": "example",
+                     *           "total": 1
+                     *         },
+                     *         "published_at": "2026-06-01T00:00:00.000Z",
+                     *         "source": "live-cron-prober",
+                     *         "stale_contract": {
+                     *           "built_under": "example",
+                     *           "live": "example"
+                     *         }
+                     *       },
+                     *       "ok": true,
+                     *       "schema_version": 1
+                     *     }
+                     */
+                    "application/json": components["schemas"]["SuccessEnvelope"] & {
+                        data?: components["schemas"]["ChainRegistrationsArtifact"];
                     };
                 };
             };

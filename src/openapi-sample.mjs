@@ -431,6 +431,56 @@ function normalizeChainServingSample(out) {
   return out;
 }
 
+function normalizeChainRegistrationsSample(out) {
+  if (
+    !out ||
+    typeof out !== "object" ||
+    !out.network ||
+    typeof out.network !== "object" ||
+    !("registrations_per_registrant" in out.network) ||
+    !("registrations" in out.network) ||
+    !Array.isArray(out.subnets)
+  ) {
+    return out;
+  }
+  // An internally consistent worked example: two subnets whose registrants emit 40 and 30
+  // NeuronRegistered events, so registrations_per_registrant reads 40/4 = 10 and 30/2 = 15; the
+  // network rollup uses the true distinct registrant count (5, below the 6 per-subnet sum because
+  // a hotkey registers on both subnets), total 40 + 30 = 70 give 70/5 = 14, and the distribution
+  // summarizes [10, 15]. The generic per-field generator cannot satisfy these events/registrants ratios itself.
+  out.subnets = [
+    {
+      netuid: 1,
+      distinct_registrants: 4,
+      registrations: 40,
+      registrations_per_registrant: 10,
+    },
+    {
+      netuid: 2,
+      distinct_registrants: 2,
+      registrations: 30,
+      registrations_per_registrant: 15,
+    },
+  ];
+  out.network = {
+    distinct_registrants: 5,
+    registrations: 70,
+    registrations_per_registrant: 14,
+  };
+  out.subnet_count = 2;
+  out.intensity_distribution = {
+    count: 2,
+    mean: 12.5,
+    min: 10,
+    p25: 10,
+    median: 10,
+    p75: 15,
+    p90: 15,
+    max: 15,
+  };
+  return out;
+}
+
 function normalizeObjectSample(out) {
   normalizeCounterpartyRelationshipSample(out);
   normalizeAccountCounterpartiesSample(out);
@@ -440,6 +490,7 @@ function normalizeObjectSample(out) {
   normalizeChainTransferPairsSample(out);
   normalizeChainWeightsSample(out);
   normalizeChainServingSample(out);
+  normalizeChainRegistrationsSample(out);
   return out;
 }
 

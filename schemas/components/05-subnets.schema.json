@@ -3141,6 +3141,91 @@
         },
         "additionalProperties": false
       },
+      "ChainRegistrationsArtifact": {
+        "type": "object",
+        "description": "Network-wide neuron-registration activity over a 7d/30d window across the subnets with observed registration activity: a per-subnet leaderboard (distinct registrants, NeuronRegistered count, registrations per registrant) plus a network rollup with the true distinct registrant count and a distribution of per-subnet re-registration intensity. Raw registration demand from the account_events NeuronRegistered stream — the companion to the neuron_daily validator-set churn in /api/v1/chain/turnover — served live at /api/v1/chain/registrations (no static file); subnet_count 0 and the leaderboard empty when cold.",
+        "required": [
+          "schema_version",
+          "window",
+          "observed_at",
+          "subnet_count",
+          "network",
+          "intensity_distribution",
+          "subnets"
+        ],
+        "properties": {
+          "schema_version": { "type": "integer" },
+          "window": { "type": ["string", "null"], "enum": ["7d", "30d", null] },
+          "observed_at": { "type": ["string", "null"], "format": "date-time" },
+          "subnet_count": { "type": "integer", "minimum": 0 },
+          "intensity_distribution": {
+            "type": ["object", "null"],
+            "description": "Spread of the per-subnet registrations-per-registrant intensity across the subnets that saw a registration in the window (null when no subnet saw a registration). subnet_count and this distribution cover only subnets with observed NeuronRegistered activity, not every registered subnet.",
+            "required": [
+              "count",
+              "mean",
+              "min",
+              "p25",
+              "median",
+              "p75",
+              "p90",
+              "max"
+            ],
+            "properties": {
+              "count": { "type": "integer", "minimum": 0 },
+              "mean": { "type": "number", "minimum": 0 },
+              "min": { "type": "number", "minimum": 0 },
+              "p25": { "type": "number", "minimum": 0 },
+              "median": { "type": "number", "minimum": 0 },
+              "p75": { "type": "number", "minimum": 0 },
+              "p90": { "type": "number", "minimum": 0 },
+              "max": { "type": "number", "minimum": 0 }
+            },
+            "additionalProperties": false
+          },
+          "network": {
+            "type": "object",
+            "description": "Rollup over the window: the true distinct registrants across all subnets (a hotkey registering on several subnets counts once, so NOT the sum of the per-subnet counts), total NeuronRegistered events, and the network registrations-per-registrant intensity (null when no neuron registered).",
+            "required": [
+              "distinct_registrants",
+              "registrations",
+              "registrations_per_registrant"
+            ],
+            "properties": {
+              "distinct_registrants": { "type": "integer", "minimum": 0 },
+              "registrations": { "type": "integer", "minimum": 0 },
+              "registrations_per_registrant": {
+                "type": ["number", "null"],
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "subnets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "netuid",
+                "distinct_registrants",
+                "registrations",
+                "registrations_per_registrant"
+              ],
+              "properties": {
+                "netuid": { "type": "integer", "minimum": 0 },
+                "distinct_registrants": { "type": "integer", "minimum": 0 },
+                "registrations": { "type": "integer", "minimum": 0 },
+                "registrations_per_registrant": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "ChainFeeDay": {
         "type": "object",
         "additionalProperties": false,
