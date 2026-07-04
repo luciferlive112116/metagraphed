@@ -1163,6 +1163,90 @@ describe("sampleFromSchema", () => {
     assert.notEqual(untouched.network.movements, 70);
   });
 
+  test("chain stake-transfers samples keep transfers-per-sender consistent", () => {
+    const senderProps = {
+      distinct_senders: { type: "integer" },
+      transfers: { type: "integer" },
+      transfers_per_sender: { type: ["number", "null"] },
+    };
+    const stakeTransfersSchema = {
+      type: "object",
+      required: [
+        "schema_version",
+        "window",
+        "observed_at",
+        "subnet_count",
+        "network",
+        "intensity_distribution",
+        "subnets",
+      ],
+      properties: {
+        schema_version: { type: "integer" },
+        window: { type: "string" },
+        observed_at: { type: "string", format: "date-time" },
+        subnet_count: { type: "integer" },
+        network: {
+          type: "object",
+          required: ["distinct_senders", "transfers", "transfers_per_sender"],
+          properties: senderProps,
+        },
+        intensity_distribution: {
+          type: ["object", "null"],
+          properties: {
+            count: { type: "integer" },
+            mean: { type: "number" },
+            min: { type: "number" },
+            p25: { type: "number" },
+            median: { type: "number" },
+            p75: { type: "number" },
+            p90: { type: "number" },
+            max: { type: "number" },
+          },
+        },
+        subnets: {
+          type: "array",
+          items: {
+            type: "object",
+            required: [
+              "netuid",
+              "distinct_senders",
+              "transfers",
+              "transfers_per_sender",
+            ],
+            properties: { netuid: { type: "integer" }, ...senderProps },
+          },
+        },
+      },
+    };
+    const sample = s(stakeTransfersSchema, "data");
+
+    // The worked example is internally consistent: each subnet's transfers_per_sender equals its
+    // StakeTransferred count divided by its distinct senders, and the network rollup does the same.
+    for (const subnet of sample.subnets) {
+      assert.equal(
+        subnet.transfers_per_sender,
+        subnet.transfers / subnet.distinct_senders,
+      );
+    }
+    assert.equal(
+      sample.network.transfers_per_sender,
+      sample.network.transfers / sample.network.distinct_senders,
+    );
+    assert.equal(sample.subnet_count, sample.subnets.length);
+    assert.equal(sample.intensity_distribution.count, sample.subnets.length);
+
+    // A shape whose network lacks transfers_per_sender is not a stake-transfers artifact and is
+    // left untouched (guard branch).
+    const notTransfers = JSON.parse(JSON.stringify(stakeTransfersSchema));
+    delete notTransfers.properties.network.properties.transfers_per_sender;
+    notTransfers.properties.network.required =
+      notTransfers.properties.network.required.filter(
+        (key) => key !== "transfers_per_sender",
+      );
+    const untouched = s(notTransfers, "data");
+    assert.notEqual(untouched.network.transfers, 70);
+  });
+
   test("chain transfer-pair samples keep the top-pair share consistent", () => {
     const ss58Pattern = "^[1-9A-HJ-NP-Za-km-z]{47,48}$";
     const pairSchema = {

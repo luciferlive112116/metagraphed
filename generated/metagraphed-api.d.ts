@@ -769,6 +769,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/chain/stake-transfers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch network-wide stake-transfer activity over a 7d or 30d window across the subnets with observed transfer activity (subnets with no StakeTransferred events are absent): a per-subnet leaderboard (StakeTransferred event count, distinct senders, and average transfers per sender) ranked by total transfers, a network rollup with the true distinct sender count (an account transferring stake out of several subnets counts once) and total transfers, and a distribution summary (count, mean, min, p25, median, p75, p90, max) of the per-subnet transfer intensity. `limit` caps the leaderboard (default 20, max 100). The between-coldkeys companion to the within-account re-delegation churn of GET /api/v1/chain/stake-moves — transfer_stake relocates staked alpha from one account to another on the same hotkey (origin leg only), so it moves ownership, not net capital. Computed live from the account_events StakeTransferred stream; schema-stable empty block when cold. Pass ?format=csv to download the per-subnet leaderboard as CSV (the network rollup + intensity distribution stay JSON-only). */
+        get: operations["chainStakeTransfers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/chain/transfer-pairs": {
         parameters: {
             query?: never;
@@ -3623,6 +3640,38 @@ export interface components {
                 movements: number;
                 movements_per_mover: number | null;
                 netuid: number;
+            }[];
+            /** @enum {string|null} */
+            window: "7d" | "30d" | null;
+        };
+        /** @description Network-wide stake-transfer activity over a 7d/30d window across the subnets with observed transfer activity: a per-subnet leaderboard (distinct senders, StakeTransferred count, transfers per sender) plus a network rollup with the true distinct sender count and a distribution of per-subnet transfer intensity. The between-coldkeys companion to the within-account re-delegation churn of /api/v1/chain/stake-moves — StakeTransferred (transfer_stake) relocates staked alpha from one account to another on the same hotkey, so it moves ownership rather than net capital or delegation; keyed on the origin subnet and sending account (origin leg only). Served live from the account_events StakeTransferred stream at /api/v1/chain/stake-transfers (no static file); subnet_count 0 and the leaderboard empty when cold. */
+        ChainStakeTransfersArtifact: {
+            /** @description Spread of the per-subnet transfers-per-sender intensity across the subnets that saw a transfer in the window (null when no subnet saw a transfer). subnet_count and this distribution cover only subnets with observed StakeTransferred activity, not every registered subnet. */
+            intensity_distribution: {
+                count: number;
+                max: number;
+                mean: number;
+                median: number;
+                min: number;
+                p25: number;
+                p75: number;
+                p90: number;
+            } | null;
+            /** @description Rollup over the window: the true distinct senders across all subnets (an account transferring stake out of several subnets counts once, so NOT the sum of the per-subnet counts), total StakeTransferred events, and the network transfers-per-sender intensity (null when no stake transferred). */
+            network: {
+                distinct_senders: number;
+                transfers: number;
+                transfers_per_sender: number | null;
+            };
+            /** Format: date-time */
+            observed_at: string | null;
+            schema_version: number;
+            subnet_count: number;
+            subnets: {
+                distinct_senders: number;
+                netuid: number;
+                transfers: number;
+                transfers_per_sender: number | null;
             }[];
             /** @enum {string|null} */
             window: "7d" | "30d" | null;
@@ -12780,6 +12829,147 @@ export interface operations {
                     };
                     /**
                      * @example netuid,distinct_movers,movements,movements_per_mover
+                     *     1,4,40,10
+                     */
+                    "text/csv": string;
+                };
+            };
+            /** @description ETag matched and the cached response is still valid. */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Query parameters were malformed or unsupported. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Artifact or API route was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description HTTP method is not supported. */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected backend error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    chainStakeTransfers: {
+        parameters: {
+            query?: {
+                window?: "7d" | "30d";
+                limit?: number;
+                /** @description Response format override. Use `csv` to download the route rows as text/csv; `json` keeps the default response envelope. */
+                format?: "json" | "csv";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Canonical artifact wrapped in the Metagraphed API envelope, or route rows as text/csv when CSV is requested. */
+            200: {
+                headers: {
+                    "cache-control": components["headers"]["CacheControl"];
+                    etag: components["headers"]["ETag"];
+                    "x-metagraph-contract-version": components["headers"]["ContractVersion"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "intensity_distribution": {
+                     *           "count": 2,
+                     *           "max": 15,
+                     *           "mean": 12.5,
+                     *           "median": 10,
+                     *           "min": 10,
+                     *           "p25": 10,
+                     *           "p75": 15,
+                     *           "p90": 15
+                     *         },
+                     *         "network": {
+                     *           "distinct_senders": 5,
+                     *           "transfers": 70,
+                     *           "transfers_per_sender": 14
+                     *         },
+                     *         "observed_at": "2026-06-01T00:00:00.000Z",
+                     *         "schema_version": 1,
+                     *         "subnet_count": 2,
+                     *         "subnets": [
+                     *           {
+                     *             "distinct_senders": 4,
+                     *             "netuid": 1,
+                     *             "transfers": 40,
+                     *             "transfers_per_sender": 10
+                     *           },
+                     *           {
+                     *             "distinct_senders": 2,
+                     *             "netuid": 2,
+                     *             "transfers": 30,
+                     *             "transfers_per_sender": 15
+                     *           }
+                     *         ],
+                     *         "window": "7d"
+                     *       },
+                     *       "meta": {
+                     *         "artifact_path": "example",
+                     *         "cache": "short",
+                     *         "contract_version": "2026-06-29.1",
+                     *         "generated_at": "2026-06-01T00:00:00.000Z",
+                     *         "pagination": {
+                     *           "collection": "example",
+                     *           "cursor": 1,
+                     *           "limit": 1,
+                     *           "next_cursor": 1,
+                     *           "order": "asc",
+                     *           "returned": 1,
+                     *           "sort": "example",
+                     *           "total": 1
+                     *         },
+                     *         "published_at": "2026-06-01T00:00:00.000Z",
+                     *         "source": "live-cron-prober",
+                     *         "stale_contract": {
+                     *           "built_under": "example",
+                     *           "live": "example"
+                     *         }
+                     *       },
+                     *       "ok": true,
+                     *       "schema_version": 1
+                     *     }
+                     */
+                    "application/json": components["schemas"]["SuccessEnvelope"] & {
+                        data?: components["schemas"]["ChainStakeTransfersArtifact"];
+                    };
+                    /**
+                     * @example netuid,distinct_senders,transfers,transfers_per_sender
                      *     1,4,40,10
                      */
                     "text/csv": string;

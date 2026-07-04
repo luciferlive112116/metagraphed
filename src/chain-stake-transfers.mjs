@@ -1,0 +1,223 @@
+// Live network-wide stake-transfer activity from the account_events StakeTransferred stream: a
+// per-subnet leaderboard plus a network rollup and intensity distribution. Pure shaping
+// (buildChainStakeTransfers) + a thin D1 loader (loadChainStakeTransfers); the field semantics live
+// in schemas/components/05-subnets.schema.json (ChainStakeTransfersArtifact). The between-coldkeys
+// companion to the within-account re-delegation churn of /chain/stake-moves: StakeTransferred
+// (transfer_stake, #2556) moves staked alpha from one coldkey to ANOTHER coldkey on the same hotkey,
+// so it relocates ownership rather than net capital or delegation. Ranked and counted by the ORIGIN
+// (netuid, coldkey); the distinct sender is the origin coldkey initiating the transfer. Only the
+// origin leg has columns (destination coldkey/netuid are dropped at ingest), so this is inherently
+// an origin-side view — see scripts/fetch-events.py `_stake_transferred` (#2556).
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The account_events kind emitted when a coldkey transfers stake to another coldkey (transfer_stake).
+export const STAKE_TRANSFERRED_EVENT_KIND = "StakeTransferred";
+
+export const CHAIN_STAKE_TRANSFERS_LIMIT_DEFAULT = 20;
+export const CHAIN_STAKE_TRANSFERS_LIMIT_MAX = 100;
+
+// Supported lookback windows (label -> days), matching the REST route's analytics
+// window set (7d/30d, default 7d). Kept next to the loader so runtime validation
+// cannot drift from the endpoint.
+export const CHAIN_STAKE_TRANSFERS_WINDOWS = { "7d": 7, "30d": 30 };
+export const DEFAULT_CHAIN_STAKE_TRANSFERS_WINDOW = "7d";
+
+// Round a transfers-per-sender ratio to a stable precision (2dp). Always finite and
+// non-negative here (events / distinct coldkeys, with the divisor guarded below).
+function round(value, dp = 2) {
+  const factor = 10 ** dp;
+  return Math.round(value * factor) / factor;
+}
+
+// A non-negative whole count from a D1 COUNT() cell (number, numeric string, or null),
+// defaulting to 0 for anything non-finite or negative.
+function toCount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+// A non-negative integer netuid, or null for a malformed/absent cell. Guard null AND a
+// blank/whitespace-only string explicitly so neither is silently coerced to subnet 0
+// (Number(null), Number(""), and Number("  ") all === 0); a malformed row must be skipped,
+// never counted as netuid 0.
+function normalizedNetuid(value) {
+  if (value == null) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const netuid = Number(value);
+  return Number.isSafeInteger(netuid) && netuid >= 0 ? netuid : null;
+}
+
+// Newest epoch-ms observed_at, or null when not finite/absent — rendered as ISO for the
+// envelope's generated_at, the same way account-events does.
+function coerceEpochMs(value) {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function toIso(value) {
+  const n = coerceEpochMs(value);
+  return n == null ? null : new Date(n).toISOString();
+}
+
+// Average StakeTransferred events per distinct sender — the subnet's re-transfer intensity (1.0
+// means each sender transferred once; higher means repeated transfers). A subnet with no senders has
+// no defined intensity (null) rather than a divide-by-zero.
+function transfersPerSender(transfers, senders) {
+  if (senders <= 0) return null;
+  return round(transfers / senders);
+}
+
+// Nearest-rank percentile of a NON-EMPTY ascending numeric array (deterministic, no
+// interpolation). Only called from intensityDistribution, which short-circuits an empty set to
+// null before reaching here.
+function percentile(ascending, p) {
+  const rank = Math.ceil((p / 100) * ascending.length);
+  return ascending[Math.min(rank, ascending.length) - 1];
+}
+
+// Spread of the per-subnet transfer intensity across every subnet with transfer activity: count,
+// mean, and min / p25 / median / p75 / p90 / max. Null when no subnet saw a transfer.
+function intensityDistribution(values) {
+  /* v8 ignore next -- defensive: only called with one value per subnet, and the builder returns
+     the empty block (distribution null) before this runs when there are no subnets */
+  if (values.length === 0) return null;
+  const ascending = [...values].sort((a, b) => a - b);
+  const sum = ascending.reduce((total, value) => total + value, 0);
+  return {
+    count: ascending.length,
+    mean: round(sum / ascending.length),
+    min: ascending[0],
+    p25: percentile(ascending, 25),
+    median: percentile(ascending, 50),
+    p75: percentile(ascending, 75),
+    p90: percentile(ascending, 90),
+    max: ascending[ascending.length - 1],
+  };
+}
+
+const EMPTY_NETWORK = {
+  distinct_senders: 0,
+  transfers: 0,
+  transfers_per_sender: null,
+};
+
+// Shape the network-wide stake-transfer scorecard from the per-subnet account_events aggregate.
+// `subnetRows` carries one row per origin netuid (COUNT(*) transfers, COUNT(DISTINCT coldkey)
+// distinct_senders). `networkDistinct` carries the true network-wide distinct coldkey count (a
+// coldkey transferring stake out of several subnets counts once, so this is NOT the sum of the
+// per-subnet distinct_senders) plus the newest observed_at. `limit` caps the leaderboard;
+// subnet_count and the distribution span every subnet with observed transfer activity (subnets with
+// no StakeTransferred events in the window are absent). Null-safe: no rows yields the empty block.
+export function buildChainStakeTransfers(
+  subnetRows,
+  { window, limit = CHAIN_STAKE_TRANSFERS_LIMIT_DEFAULT, networkDistinct } = {},
+) {
+  const list = Array.isArray(subnetRows) ? subnetRows : [];
+  const flooredLimit = Math.floor(Number(limit));
+  const normalizedLimit = Number.isFinite(flooredLimit)
+    ? Math.max(1, Math.min(flooredLimit, CHAIN_STAKE_TRANSFERS_LIMIT_MAX))
+    : CHAIN_STAKE_TRANSFERS_LIMIT_DEFAULT;
+  const observedAt = toIso(networkDistinct?.newest_observed);
+
+  const empty = {
+    schema_version: 1,
+    window: window ?? null,
+    observed_at: observedAt,
+    subnet_count: 0,
+    network: { ...EMPTY_NETWORK },
+    intensity_distribution: null,
+    subnets: [],
+  };
+  if (list.length === 0) return empty;
+
+  // Merge by netuid so a malformed direct caller passing duplicate rows for a subnet sums rather
+  // than double-counting (the SQL loader GROUPs BY netuid, so production rows are unique per
+  // subnet; this keeps the pure builder correct outside that path).
+  const perNetuid = new Map();
+  for (const row of list) {
+    const netuid = normalizedNetuid(row?.netuid);
+    if (netuid == null) continue;
+    const senders = toCount(row?.distinct_senders);
+    if (senders === 0) continue; // no senders: not a transfer surface
+    const bucket = perNetuid.get(netuid) ?? { senders: 0, transfers: 0 };
+    bucket.senders += senders;
+    bucket.transfers += toCount(row?.transfers);
+    perNetuid.set(netuid, bucket);
+  }
+  if (perNetuid.size === 0) return empty;
+
+  const subnets = [];
+  let totalTransfers = 0;
+  for (const [netuid, bucket] of perNetuid) {
+    subnets.push({
+      netuid,
+      distinct_senders: bucket.senders,
+      transfers: bucket.transfers,
+      transfers_per_sender: transfersPerSender(
+        bucket.transfers,
+        bucket.senders,
+      ),
+    });
+    totalTransfers += bucket.transfers;
+  }
+  // Most active sending subnets first (by total StakeTransferred events), tie-broken by netuid.
+  subnets.sort((a, b) => b.transfers - a.transfers || a.netuid - b.netuid);
+
+  const networkSenders = toCount(networkDistinct?.distinct_senders);
+  const network = {
+    distinct_senders: networkSenders,
+    transfers: totalTransfers,
+    transfers_per_sender: transfersPerSender(totalTransfers, networkSenders),
+  };
+
+  return {
+    schema_version: 1,
+    window: window ?? null,
+    observed_at: observedAt,
+    subnet_count: subnets.length,
+    network,
+    // Distribution of per-subnet transfer intensity over EVERY subnet (not just the returned page),
+    // so the spread is network-wide even when `limit` truncates the leaderboard.
+    intensity_distribution: intensityDistribution(
+      subnets.map((subnet) => subnet.transfers_per_sender),
+    ),
+    subnets: subnets.slice(0, normalizedLimit),
+  };
+}
+
+// Network-wide stake-transfer activity, computed live: read the account_events StakeTransferred
+// stream over the window (observed_at >= now - windowDays, epoch ms), first as a single network
+// aggregate (true distinct senders + newest observed_at, bounded by idx_account_events_observed) and
+// then grouped by netuid for the per-subnet leaderboard, and shape with buildChainStakeTransfers. The
+// newest-observed probe doubles as the cold-store guard: a null MAX(observed_at) skips the per-subnet
+// read. The handler resolves windowLabel/windowDays from analyticsWindow (7d/30d). Cold/absent store
+// -> the schema-stable empty block.
+export async function loadChainStakeTransfers(
+  d1,
+  { windowLabel, windowDays, limit } = {},
+) {
+  const cutoff = Date.now() - windowDays * DAY_MS;
+  const networkRows = await d1(
+    "SELECT COUNT(DISTINCT coldkey) AS distinct_senders, " +
+      "MAX(observed_at) AS newest_observed " +
+      "FROM account_events WHERE event_kind = ? AND observed_at >= ?",
+    [STAKE_TRANSFERRED_EVENT_KIND, cutoff],
+  );
+  const networkDistinct = networkRows?.[0] ?? null;
+  let subnetRows = [];
+  if (networkDistinct?.newest_observed != null) {
+    subnetRows = await d1(
+      "SELECT netuid, COUNT(*) AS transfers, COUNT(DISTINCT coldkey) AS distinct_senders " +
+        "FROM account_events WHERE event_kind = ? AND observed_at >= ? GROUP BY netuid " +
+        "ORDER BY transfers DESC, netuid ASC",
+      [STAKE_TRANSFERRED_EVENT_KIND, cutoff],
+    );
+  }
+  return buildChainStakeTransfers(subnetRows, {
+    window: windowLabel,
+    limit,
+    networkDistinct,
+  });
+}

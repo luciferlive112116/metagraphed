@@ -5314,6 +5314,160 @@
         ],
         "type": "object"
       },
+      "ChainStakeTransfersArtifact": {
+        "additionalProperties": false,
+        "description": "Network-wide stake-transfer activity over a 7d/30d window across the subnets with observed transfer activity: a per-subnet leaderboard (distinct senders, StakeTransferred count, transfers per sender) plus a network rollup with the true distinct sender count and a distribution of per-subnet transfer intensity. The between-coldkeys companion to the within-account re-delegation churn of /api/v1/chain/stake-moves — StakeTransferred (transfer_stake) relocates staked alpha from one account to another on the same hotkey, so it moves ownership rather than net capital or delegation; keyed on the origin subnet and sending account (origin leg only). Served live from the account_events StakeTransferred stream at /api/v1/chain/stake-transfers (no static file); subnet_count 0 and the leaderboard empty when cold.",
+        "properties": {
+          "intensity_distribution": {
+            "additionalProperties": false,
+            "description": "Spread of the per-subnet transfers-per-sender intensity across the subnets that saw a transfer in the window (null when no subnet saw a transfer). subnet_count and this distribution cover only subnets with observed StakeTransferred activity, not every registered subnet.",
+            "properties": {
+              "count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "max": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "mean": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "median": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "min": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "p25": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "p75": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "p90": {
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "count",
+              "mean",
+              "min",
+              "p25",
+              "median",
+              "p75",
+              "p90",
+              "max"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "network": {
+            "additionalProperties": false,
+            "description": "Rollup over the window: the true distinct senders across all subnets (an account transferring stake out of several subnets counts once, so NOT the sum of the per-subnet counts), total StakeTransferred events, and the network transfers-per-sender intensity (null when no stake transferred).",
+            "properties": {
+              "distinct_senders": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "transfers": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "transfers_per_sender": {
+                "minimum": 0,
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "distinct_senders",
+              "transfers",
+              "transfers_per_sender"
+            ],
+            "type": "object"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "type": "integer"
+          },
+          "subnet_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "subnets": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "distinct_senders": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "netuid": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "transfers": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "transfers_per_sender": {
+                  "minimum": 0,
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "netuid",
+                "distinct_senders",
+                "transfers",
+                "transfers_per_sender"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "window": {
+            "enum": [
+              "7d",
+              "30d",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "window",
+          "observed_at",
+          "subnet_count",
+          "network",
+          "intensity_distribution",
+          "subnets"
+        ],
+        "type": "object"
+      },
       "ChainTransferPair": {
         "additionalProperties": false,
         "description": "One directed sender -> receiver pair on the chain-transfer-pairs leaderboard. Rows are well-formed non-self Balances.Transfer events with both account addresses and a non-negative amount.",

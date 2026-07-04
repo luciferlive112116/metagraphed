@@ -3952,6 +3952,91 @@
         },
         "additionalProperties": false
       },
+      "ChainStakeTransfersArtifact": {
+        "type": "object",
+        "description": "Network-wide stake-transfer activity over a 7d/30d window across the subnets with observed transfer activity: a per-subnet leaderboard (distinct senders, StakeTransferred count, transfers per sender) plus a network rollup with the true distinct sender count and a distribution of per-subnet transfer intensity. The between-coldkeys companion to the within-account re-delegation churn of /api/v1/chain/stake-moves — StakeTransferred (transfer_stake) relocates staked alpha from one account to another on the same hotkey, so it moves ownership rather than net capital or delegation; keyed on the origin subnet and sending account (origin leg only). Served live from the account_events StakeTransferred stream at /api/v1/chain/stake-transfers (no static file); subnet_count 0 and the leaderboard empty when cold.",
+        "required": [
+          "schema_version",
+          "window",
+          "observed_at",
+          "subnet_count",
+          "network",
+          "intensity_distribution",
+          "subnets"
+        ],
+        "properties": {
+          "schema_version": { "type": "integer" },
+          "window": { "type": ["string", "null"], "enum": ["7d", "30d", null] },
+          "observed_at": { "type": ["string", "null"], "format": "date-time" },
+          "subnet_count": { "type": "integer", "minimum": 0 },
+          "intensity_distribution": {
+            "type": ["object", "null"],
+            "description": "Spread of the per-subnet transfers-per-sender intensity across the subnets that saw a transfer in the window (null when no subnet saw a transfer). subnet_count and this distribution cover only subnets with observed StakeTransferred activity, not every registered subnet.",
+            "required": [
+              "count",
+              "mean",
+              "min",
+              "p25",
+              "median",
+              "p75",
+              "p90",
+              "max"
+            ],
+            "properties": {
+              "count": { "type": "integer", "minimum": 0 },
+              "mean": { "type": "number", "minimum": 0 },
+              "min": { "type": "number", "minimum": 0 },
+              "p25": { "type": "number", "minimum": 0 },
+              "median": { "type": "number", "minimum": 0 },
+              "p75": { "type": "number", "minimum": 0 },
+              "p90": { "type": "number", "minimum": 0 },
+              "max": { "type": "number", "minimum": 0 }
+            },
+            "additionalProperties": false
+          },
+          "network": {
+            "type": "object",
+            "description": "Rollup over the window: the true distinct senders across all subnets (an account transferring stake out of several subnets counts once, so NOT the sum of the per-subnet counts), total StakeTransferred events, and the network transfers-per-sender intensity (null when no stake transferred).",
+            "required": [
+              "distinct_senders",
+              "transfers",
+              "transfers_per_sender"
+            ],
+            "properties": {
+              "distinct_senders": { "type": "integer", "minimum": 0 },
+              "transfers": { "type": "integer", "minimum": 0 },
+              "transfers_per_sender": {
+                "type": ["number", "null"],
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "subnets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "netuid",
+                "distinct_senders",
+                "transfers",
+                "transfers_per_sender"
+              ],
+              "properties": {
+                "netuid": { "type": "integer", "minimum": 0 },
+                "distinct_senders": { "type": "integer", "minimum": 0 },
+                "transfers": { "type": "integer", "minimum": 0 },
+                "transfers_per_sender": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "ChainStakeMovesArtifact": {
         "type": "object",
         "description": "Network-wide stake-movement (re-delegation) activity over a 7d/30d window across the subnets with observed movement activity: a per-subnet leaderboard (distinct movers, StakeMoved count, movements per mover) plus a network rollup with the true distinct mover count and a distribution of per-subnet re-move intensity. The re-delegation-churn companion to the net-capital-flow /api/v1/chain/stake-flow — StakeMoved is an account relocating stake between hotkeys/subnets (move_stake) without unstaking, so it measures churn, not flow; keyed on the origin subnet and moving account. Served live from the account_events StakeMoved stream at /api/v1/chain/stake-moves (no static file); subnet_count 0 and the leaderboard empty when cold.",
