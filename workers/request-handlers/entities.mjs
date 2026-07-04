@@ -132,6 +132,11 @@ import {
   DEFAULT_SUBNET_SERVING_WINDOW,
 } from "../../src/subnet-serving.mjs";
 import {
+  loadSubnetRegistrations,
+  SUBNET_REGISTRATIONS_WINDOWS,
+  DEFAULT_SUBNET_REGISTRATIONS_WINDOW,
+} from "../../src/subnet-registrations.mjs";
+import {
   loadSubnetStakeFlow,
   STAKE_FLOW_WINDOWS,
   DEFAULT_STAKE_FLOW_WINDOW,
@@ -1204,6 +1209,57 @@ export async function handleSubnetServing(request, env, netuid, url) {
       meta: await accountMeta(
         env,
         `/metagraph/subnets/${netuid}/serving.json`,
+        data.observed_at,
+      ),
+    },
+    "short",
+  );
+}
+
+// Canonical edge-cache key for the subnet-registrations route: only ?window= (7d/30d) changes the
+// response, canonicalized to its default when omitted so equivalent requests share a slot.
+export function canonicalSubnetRegistrationsCachePath(url) {
+  const validationError = validateQueryParams(url, ["window"]);
+  if (validationError) return `${url.pathname}${url.search}`;
+  const windowParam =
+    url.searchParams.get("window") || DEFAULT_SUBNET_REGISTRATIONS_WINDOW;
+  if (!Object.hasOwn(SUBNET_REGISTRATIONS_WINDOWS, windowParam)) {
+    return `${url.pathname}${url.search}`;
+  }
+  return `${url.pathname}?window=${encodeURIComponent(windowParam)}`;
+}
+
+// GET /api/v1/subnets/{netuid}/registrations?window=7d|30d: neuron-registration activity for one
+// subnet over the window — distinct registrants (hotkeys), NeuronRegistered event count, and
+// registrations per registrant — read live from the account_events NeuronRegistered stream. The
+// account_events companion to /turnover. Cold/absent store → 200 with a zeroed card (never 404).
+export async function handleSubnetRegistrations(request, env, netuid, url) {
+  const validationError = validateQueryParams(url, ["window"]);
+  if (validationError) return analyticsQueryError(validationError);
+  const windowParam =
+    url.searchParams.get("window") || DEFAULT_SUBNET_REGISTRATIONS_WINDOW;
+  if (!Object.hasOwn(SUBNET_REGISTRATIONS_WINDOWS, windowParam)) {
+    return analyticsQueryError({
+      parameter: "window",
+      message: unsupportedWindowMessage(
+        windowParam,
+        SUBNET_REGISTRATIONS_WINDOWS,
+      ),
+    });
+  }
+  const data = await loadSubnetRegistrations(d1Runner(env), netuid, {
+    windowLabel: windowParam,
+    windowDays: SUBNET_REGISTRATIONS_WINDOWS[windowParam],
+  });
+  // account_events-derived, so the meta reports the event-stream source (accountMeta) with
+  // generated_at the newest observed NeuronRegistered event, mirroring the sibling stake-flow route.
+  return envelopeResponse(
+    request,
+    {
+      data,
+      meta: await accountMeta(
+        env,
+        `/metagraph/subnets/${netuid}/registrations.json`,
         data.observed_at,
       ),
     },

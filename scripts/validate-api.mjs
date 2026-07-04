@@ -270,6 +270,20 @@ const checks = [
     },
   ],
   [
+    "/api/v1/subnets/7/registrations?window=30d",
+    (body) => {
+      assert.equal(body.data.netuid, 7);
+      assert.equal(body.data.window, "30d");
+      assert.equal(typeof body.data.distinct_registrants, "number");
+      assert.equal(typeof body.data.registrations, "number");
+      assert.equal(
+        body.data.registrations_per_registrant === null ||
+          typeof body.data.registrations_per_registrant === "number",
+        true,
+      );
+    },
+  ],
+  [
     "/api/v1/subnets/movers?window=30d&sort=stake&limit=10",
     (body) => {
       assert.equal(body.data.window, "30d");

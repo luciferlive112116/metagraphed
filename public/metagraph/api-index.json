@@ -408,6 +408,13 @@
     },
     {
       "contract_version": "2026-07-03.2",
+      "id": "subnet-registrations",
+      "path": "/metagraph/subnets/{netuid}/registrations.json",
+      "schema_ref": "#/components/schemas/SubnetRegistrationsArtifact",
+      "storage_tier": "r2"
+    },
+    {
+      "contract_version": "2026-07-03.2",
       "id": "subnet-stake-flow",
       "path": "/metagraph/subnets/{netuid}/stake-flow.json",
       "schema_ref": "#/components/schemas/SubnetStakeFlowArtifact",
@@ -4781,6 +4788,29 @@
       "id": "subnet-serving",
       "method": "GET",
       "path": "/api/v1/subnets/{netuid}/serving",
+      "public": true,
+      "query_collection": null,
+      "query_filter_names": [],
+      "query_parameters": [
+        {
+          "name": "window",
+          "schema": {
+            "enum": [
+              "7d",
+              "30d"
+            ],
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "artifact_path": "/metagraph/subnets/{netuid}/registrations.json",
+      "cache": "short",
+      "description": "Fetch neuron-registration activity for one subnet over a 7d or 30d window: the distinct registrants (hotkeys), the NeuronRegistered event count, and the average registrations per registrant, computed live from the account_events NeuronRegistered stream. Raw registration demand — the account_events companion to the neuron_daily validator-set churn in GET /api/v1/subnets/{netuid}/turnover (net snapshot change, not raw event volume). Schema-stable zeroed card when the subnet has no NeuronRegistered events in the window.",
+      "id": "subnet-registrations",
+      "method": "GET",
+      "path": "/api/v1/subnets/{netuid}/registrations",
       "public": true,
       "query_collection": null,
       "query_filter_names": [],

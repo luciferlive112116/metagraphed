@@ -98,6 +98,8 @@ import {
   canonicalSubnetWeightsCachePath,
   handleSubnetServing,
   canonicalSubnetServingCachePath,
+  handleSubnetRegistrations,
+  canonicalSubnetRegistrationsCachePath,
   handleSubnetYield,
   handleSubnetPerformance,
   handleSubnetMovers,
@@ -296,6 +298,7 @@ import {
   SUBNET_STAKE_FLOW_PATH_PATTERN,
   SUBNET_WEIGHTS_PATH_PATTERN,
   SUBNET_SERVING_PATH_PATTERN,
+  SUBNET_REGISTRATIONS_PATH_PATTERN,
   SUBNET_YIELD_PATH_PATTERN,
   SUBNET_PERFORMANCE_PATH_PATTERN,
   TRENDS_PATH_PATTERN,
@@ -1495,6 +1498,27 @@ export async function handleRequest(request, env = {}, ctx = {}) {
             resolved.url,
           ),
         canonicalSubnetServingCachePath(resolved.url),
+      );
+    }
+    const registrationsMatch = SUBNET_REGISTRATIONS_PATH_PATTERN.exec(
+      resolved.url.pathname,
+    );
+    if (registrationsMatch) {
+      // Neuron-registration activity summed live from account_events over the window —
+      // deterministic per request, edge-cache like the sibling stake-flow route.
+      return withEdgeCache(
+        request,
+        ctx,
+        env,
+        "subnet-registrations",
+        () =>
+          handleSubnetRegistrations(
+            request,
+            env,
+            Number(registrationsMatch[1]),
+            resolved.url,
+          ),
+        canonicalSubnetRegistrationsCachePath(resolved.url),
       );
     }
     // Per-UID emission yield distribution over the current neurons snapshot — computed
