@@ -19,6 +19,10 @@ const result = spawnSync(
     cwd: repoRoot,
     encoding: "utf8",
     stdio: "pipe",
+    // The generated d.ts now exceeds the 1 MB spawnSync default; match the 50 MB
+    // buffer the build uses (scripts/build-artifacts.mjs) so stdout is not
+    // truncated (ENOBUFS) when writing the committed type artifacts.
+    maxBuffer: 50 * 1024 * 1024,
   },
 );
 

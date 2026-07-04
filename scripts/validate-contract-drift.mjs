@@ -43,6 +43,10 @@ const typegen = spawnSync(
   {
     cwd: repoRoot,
     encoding: "utf8",
+    // The generated d.ts now exceeds the 1 MB spawnSync default; match the 50 MB
+    // buffer the build uses (scripts/build-artifacts.mjs) so stdout is not
+    // truncated (ENOBUFS) and wrongly reported as an openapi-typescript failure.
+    maxBuffer: 50 * 1024 * 1024,
   },
 );
 if (typegen.status !== 0) {
