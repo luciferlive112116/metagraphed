@@ -791,6 +791,13 @@ const CHAIN_SERVING_CSV_COLUMNS = [
   "announcements_per_server",
 ];
 
+const CHAIN_REGISTRATIONS_CSV_COLUMNS = [
+  "netuid",
+  "distinct_registrants",
+  "registrations",
+  "registrations_per_registrant",
+];
+
 // CSV column order for the /api/v1/chain/transfer-pairs top corridors (the
 // row-shaped `pairs` array). The totals + top_pair_share rollup stay JSON-only,
 // mirroring chain-stake-flow / chain-weights.
@@ -1338,13 +1345,16 @@ export async function handleChainServing(request, env, url, ctx = {}) {
 // edge cache and repeatedly force the network-wide aggregations, cache keyed on the analytics cron
 // freshness. The leaderboard is fixed to most-active-first (total NeuronRegistered events).
 export async function handleChainRegistrations(request, env, url, ctx = {}) {
-  const { label, days, error } = analyticsWindow(url, ["limit"]);
+  const { label, days, error } = analyticsWindow(url, ["limit", "format"]);
   if (error) return analyticsQueryError(error);
+  const formatError = validateFormatParam(url);
+  if (formatError) return analyticsQueryError(formatError);
   const { limit, error: limitError } = parseLimitParam(url, {
     defaultLimit: CHAIN_REGISTRATIONS_LIMIT_DEFAULT,
     maxLimit: CHAIN_REGISTRATIONS_LIMIT_MAX,
   });
   if (limitError) return analyticsQueryError(limitError);
+  const csv = csvRequested(url, request);
 
   const cacheRequest =
     request.method === "HEAD"
@@ -1361,6 +1371,17 @@ export async function handleChainRegistrations(request, env, url, ctx = {}) {
         windowDays: days,
         limit,
       });
+      // CSV exports the row-shaped per-subnet leaderboard; the network rollup +
+      // intensity_distribution stay JSON-only (mirrors chain-serving).
+      if (csv) {
+        return csvResponse(
+          data.subnets,
+          "chain-registrations",
+          "short",
+          cacheRequest,
+          CHAIN_REGISTRATIONS_CSV_COLUMNS,
+        );
+      }
       return envelopeResponse(
         cacheRequest,
         {
@@ -1374,7 +1395,7 @@ export async function handleChainRegistrations(request, env, url, ctx = {}) {
         "short",
       );
     },
-    canonicalAnalyticsCacheRoute(url, ["limit"]),
+    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
