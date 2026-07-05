@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { sanitizeApiBase } from "./config";
 
 // sanitizeApiBase is the XSS taint barrier: a persisted / user-supplied API base
@@ -37,5 +37,141 @@ describe("sanitizeApiBase", () => {
 
   it("accepts HTTPS regardless of scheme casing", () => {
     expect(sanitizeApiBase("HTTPS://api.metagraph.sh")).toBe("HTTPS://api.metagraph.sh");
+  });
+});
+
+// A minimal browser `window` for the CSR paths: an EventTarget (so add/remove/dispatch work) plus a
+// Map-backed localStorage. Node 22 provides EventTarget + CustomEvent globally, so setApiBase's
+// `new CustomEvent(...)` + `window.dispatchEvent(...)` broadcast exercises for real.
+function makeWindow(seed: Record<string, string> = {}) {
+  const store = new Map<string, string>(Object.entries(seed));
+  const win = new EventTarget() as EventTarget & {
+    localStorage: Storage;
+    store: Map<string, string>;
+  };
+  win.store = store;
+  win.localStorage = {
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+    clear: () => store.clear(),
+    key: () => null,
+    get length() {
+      return store.size;
+    },
+  };
+  return win;
+}
+
+// A fresh module instance per case: config.ts caches the base/network at module scope (and reads
+// `window` at import time via `API_BASE = getApiBase()`), so resetModules + a re-import is the only
+// way to observe first-read behavior deterministically. Stub `window` BEFORE importing so import-time
+// reads see it (or leave it unset for the SSR paths).
+async function freshConfig(win?: ReturnType<typeof makeWindow>) {
+  vi.resetModules();
+  if (win) vi.stubGlobal("window", win);
+  return import("./config");
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("getApiBase / setApiBase (CSR: caching, persistence, broadcast)", () => {
+  it("reads a persisted base on first call, then serves it from cache", async () => {
+    const win = makeWindow({ "metagraphed:api-base": "https://stored.example" });
+    const cfg = await freshConfig(win);
+    expect(cfg.getApiBase()).toBe("https://stored.example");
+    // Mutating storage after the first (caching) read must NOT change the served value.
+    win.store.set("metagraphed:api-base", "https://changed.example");
+    expect(cfg.getApiBase()).toBe("https://stored.example");
+  });
+
+  it("ignores a persisted value that fails the sanitizer, falling back to the default", async () => {
+    const cfg = await freshConfig(makeWindow({ "metagraphed:api-base": "javascript:alert(1)" }));
+    expect(cfg.getApiBase()).toBe(cfg.DEFAULT_API_BASE);
+  });
+
+  it("setApiBase persists a valid base, updates the cache, and broadcasts it", async () => {
+    const win = makeWindow();
+    const cfg = await freshConfig(win);
+    const seen: string[] = [];
+    const off = cfg.onApiBaseChange((next) => seen.push(next));
+    cfg.setApiBase("https://custom.example/");
+    expect(cfg.getApiBase()).toBe("https://custom.example"); // trailing slash trimmed
+    expect(win.store.get("metagraphed:api-base")).toBe("https://custom.example");
+    expect(seen).toEqual(["https://custom.example"]);
+    // After unsubscribing, further changes are not delivered.
+    off();
+    cfg.setApiBase("https://other.example");
+    expect(seen).toEqual(["https://custom.example"]);
+  });
+
+  it("setApiBase to the default clears the persisted override", async () => {
+    const win = makeWindow({ "metagraphed:api-base": "https://custom.example" });
+    const cfg = await freshConfig(win);
+    cfg.setApiBase(cfg.DEFAULT_API_BASE);
+    expect(win.store.has("metagraphed:api-base")).toBe(false);
+    expect(cfg.getApiBase()).toBe(cfg.DEFAULT_API_BASE);
+  });
+
+  it("setApiBase with an invalid value falls back to the default", async () => {
+    const cfg = await freshConfig(makeWindow());
+    cfg.setApiBase("not-a-url");
+    expect(cfg.getApiBase()).toBe(cfg.DEFAULT_API_BASE);
+  });
+});
+
+describe("getNetwork / setNetwork (CSR: caching, persistence, broadcast)", () => {
+  it("reads a persisted network on first call, then serves it from cache", async () => {
+    const win = makeWindow({ "metagraphed:network": "testnet" });
+    const cfg = await freshConfig(win);
+    expect(cfg.getNetwork().id).toBe("testnet");
+    expect(cfg.getNetworkPrefix()).toBe("testnet");
+    win.store.set("metagraphed:network", "mainnet");
+    expect(cfg.getNetwork().id).toBe("testnet"); // cached
+  });
+
+  it("falls back to the default network for an unknown persisted id", async () => {
+    const cfg = await freshConfig(makeWindow({ "metagraphed:network": "bogus" }));
+    expect(cfg.getNetwork().id).toBe(cfg.DEFAULT_NETWORK.id);
+    expect(cfg.getNetworkPrefix()).toBe("");
+  });
+
+  it("setNetwork persists a non-default id, updates the cache, and broadcasts the resolved network", async () => {
+    const win = makeWindow();
+    const cfg = await freshConfig(win);
+    const seen: string[] = [];
+    const off = cfg.onNetworkChange((next) => seen.push(next.id));
+    cfg.setNetwork("testnet");
+    expect(cfg.getNetwork().id).toBe("testnet");
+    expect(win.store.get("metagraphed:network")).toBe("testnet");
+    expect(seen).toEqual(["testnet"]);
+    off();
+    cfg.setNetwork("mainnet");
+    expect(seen).toEqual(["testnet"]);
+  });
+
+  it("setNetwork to the default clears the persisted override; an unknown id resolves to the default", async () => {
+    const win = makeWindow({ "metagraphed:network": "testnet" });
+    const cfg = await freshConfig(win);
+    cfg.setNetwork("mainnet");
+    expect(win.store.has("metagraphed:network")).toBe(false);
+    cfg.setNetwork("nope");
+    expect(cfg.getNetwork().id).toBe(cfg.DEFAULT_NETWORK.id);
+  });
+});
+
+describe("SSR safety (no window)", () => {
+  it("defaults everything and returns no-op unsubscribers when window is undefined", async () => {
+    const cfg = await freshConfig(); // no window stubbed
+    expect(cfg.getApiBase()).toBe(cfg.DEFAULT_API_BASE);
+    expect(cfg.getNetwork().id).toBe(cfg.DEFAULT_NETWORK.id);
+    expect(cfg.getNetworkPrefix()).toBe("");
+    expect(typeof cfg.onApiBaseChange(() => {})).toBe("function");
+    expect(typeof cfg.onNetworkChange(() => {})).toBe("function");
+    // setters must not throw without a window.
+    expect(() => cfg.setApiBase("https://x.example")).not.toThrow();
+    expect(() => cfg.setNetwork("testnet")).not.toThrow();
   });
 });
