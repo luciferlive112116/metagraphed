@@ -4107,10 +4107,13 @@ export const changelogQuery = () =>
 
 export const searchQuery = (q: string, limit = 20) =>
   queryOptions({
-    queryKey: k("search", q, limit),
+    queryKey: k("search-index", q, limit),
+    // Typeahead uses the slim /search-index (the same documents, ranking, and q/limit
+    // filtering as /search, but without the per-document token blobs) for a lighter,
+    // faster browser round-trip on every keystroke (#3490).
     queryFn: ({ signal }) =>
       fetchList<{ id: string; kind?: string; title?: string; url?: string }>(
-        "/api/v1/search",
+        "/api/v1/search-index",
         "documents",
         { q, limit },
         signal,
