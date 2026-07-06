@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { buildCsvExportUrl, triggerCsvDownload } from "./csv-export";
+import { buildCsvExportUrl, downloadCsvFromUrl, triggerCsvDownload } from "./csv-export";
 
 describe("buildCsvExportUrl", () => {
   it("appends format=csv to a relative path", () => {
@@ -27,16 +27,20 @@ describe("buildCsvExportUrl", () => {
       "https://api.example/v1/subnets?netuid=7&format=csv",
     );
   });
+
+  it("treats scheme casing as absolute", () => {
+    expect(buildCsvExportUrl("HTTP://API.EXAMPLE/v1/subnets")).toBe(
+      "http://api.example/v1/subnets?format=csv",
+    );
+  });
 });
 
 describe("triggerCsvDownload", () => {
-  it("clicks a transient anchor with target=_blank", () => {
+  it("clicks a transient same-tab anchor", () => {
     const click = vi.fn();
     const remove = vi.fn();
     const anchor = {
       href: "",
-      target: "",
-      rel: "",
       click,
       remove,
     } as unknown as HTMLAnchorElement;
@@ -50,11 +54,28 @@ describe("triggerCsvDownload", () => {
 
     expect(document.createElement).toHaveBeenCalledWith("a");
     expect(anchor.href).toBe("/api/v1/subnets?format=csv");
-    expect(anchor.target).toBe("_blank");
-    expect(anchor.rel).toBe("noopener noreferrer");
     expect(appendChild).toHaveBeenCalledWith(anchor);
     expect(click).toHaveBeenCalledTimes(1);
     expect(remove).toHaveBeenCalledTimes(1);
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("downloadCsvFromUrl", () => {
+  it("merges format=csv then triggers the anchor download", () => {
+    const click = vi.fn();
+    const remove = vi.fn();
+    const anchor = { href: "", click, remove } as unknown as HTMLAnchorElement;
+    vi.stubGlobal("document", {
+      createElement: vi.fn().mockReturnValue(anchor),
+      body: { appendChild: vi.fn().mockReturnValue(anchor) },
+    });
+
+    downloadCsvFromUrl("/api/v1/blocks?limit=25");
+
+    expect(anchor.href).toBe("/api/v1/blocks?limit=25&format=csv");
+    expect(click).toHaveBeenCalledTimes(1);
 
     vi.unstubAllGlobals();
   });
