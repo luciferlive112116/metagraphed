@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   EVENT_KIND_CATEGORIES,
+  EVENT_KIND_CATEGORY_LABELS,
+  EVENT_KIND_LABELS,
+  type EventKindCategory,
   eventKindCategory,
   eventKindCategoryLabel,
   eventKindLabel,
@@ -54,5 +57,28 @@ describe("eventKindCategoryLabel", () => {
   it("returns explorer-facing category names", () => {
     expect(eventKindCategoryLabel("stake")).toBe("Stake");
     expect(eventKindCategoryLabel("other")).toBe("Other");
+  });
+
+  it("covers every canonical category slug", () => {
+    const categories = Object.keys(EVENT_KIND_CATEGORY_LABELS) as EventKindCategory[];
+    expect(categories).toHaveLength(9);
+    for (const category of categories) {
+      expect(eventKindCategoryLabel(category)).toBe(EVENT_KIND_CATEGORY_LABELS[category]);
+    }
+  });
+});
+
+describe("EVENT_KIND map parity", () => {
+  it("keeps label and category maps aligned on the same kind keys", () => {
+    expect(Object.keys(EVENT_KIND_LABELS).sort()).toEqual(
+      Object.keys(EVENT_KIND_CATEGORIES).sort(),
+    );
+  });
+
+  it("routes every categorized kind through eventKindLabel()", () => {
+    for (const kind of Object.keys(EVENT_KIND_CATEGORIES)) {
+      expect(eventKindLabel(kind)).toBe(EVENT_KIND_LABELS[kind]);
+      expect(eventKindCategory(kind)).toBe(EVENT_KIND_CATEGORIES[kind]);
+    }
   });
 });
