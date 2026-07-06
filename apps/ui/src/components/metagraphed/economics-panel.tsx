@@ -1,9 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { economicsQuery, subnetStakeMovesQuery } from "@/lib/metagraphed/queries";
+import {
+  economicsQuery,
+  subnetStakeMovesQuery,
+  subnetStakeTransfersQuery,
+} from "@/lib/metagraphed/queries";
 import { StatTile } from "@/components/metagraphed/charts/stat-tile";
 import { MiniStack } from "@/components/metagraphed/charts/stat-with-spark";
 import { SparkLegend } from "@/components/metagraphed/charts/spark-legend";
 import { stakeMovesTileModel } from "@/lib/metagraphed/stake-moves-tile";
+import { stakeTransfersTileModel } from "@/lib/metagraphed/stake-transfers-tile";
 import { formatNumber } from "@/lib/metagraphed/format";
 
 // #1112: per-subnet on-chain economics (emission share, alpha price, stake,
@@ -66,6 +71,42 @@ function StakeMovesTile({ netuid }: { netuid: number }) {
   );
 }
 
+// #3484: between-accounts stake-transfer (StakeTransferred) activity for this
+// subnet over the trailing 30-day window, from subnetStakeTransfersQuery. Same
+// flat-window / MiniStack + SparkLegend single-snapshot idiom as StakeMovesTile.
+function StakeTransfersTile({ netuid }: { netuid: number }) {
+  const { data: res, isPending, isError } = useQuery(subnetStakeTransfersQuery(netuid));
+  const card = res?.data;
+  const m = stakeTransfersTileModel(card);
+  const value = isError ? "—" : isPending && !card ? "…" : formatNumber(m.transfers);
+  return (
+    <StatTile
+      eyebrow="Stake transfers"
+      tone="accent"
+      value={value}
+      hint={`${m.senders} sender${m.senders === 1 ? "" : "s"}`}
+      chart={
+        <SparkLegend
+          metric="Stake transfers"
+          source={`On-chain StakeTransferred (transfer_stake) events for SN${netuid} over the trailing 30-day window — ${m.summary}.`}
+          windowLabel={card?.window ?? "30d"}
+          updatedAt={card?.observed_at ?? null}
+          staleness="Counts settle as the chain-events indexer catches up; the bar hides when no stake transfers occurred in the window."
+        >
+          <span className="flex w-[72px] items-center gap-1.5">
+            <span className="w-6 text-right font-mono text-[11px] tabular-nums text-ink">
+              {m.perSender != null ? `${m.perSender.toFixed(1)}×` : "—"}
+            </span>
+            <span className="max-w-[56px] flex-1">
+              <MiniStack segments={m.segments} height={6} />
+            </span>
+          </span>
+        </SparkLegend>
+      }
+    />
+  );
+}
+
 export function EconomicsPanel({ netuid }: { netuid: number }) {
   const { data: res, isPending } = useQuery(economicsQuery());
   const e = res?.data.find((x) => x.netuid === netuid);
@@ -107,6 +148,7 @@ export function EconomicsPanel({ netuid }: { netuid: number }) {
         hint={e.registration_allowed === false ? "closed" : "open"}
       />
       <StakeMovesTile netuid={netuid} />
+      <StakeTransfersTile netuid={netuid} />
     </div>
   );
 }
