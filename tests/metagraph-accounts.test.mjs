@@ -4,6 +4,7 @@ import {
   buildGlobalAccounts,
   loadGlobalAccounts,
   DEFAULT_GLOBAL_ACCOUNT_SORT,
+  GLOBAL_ACCOUNT_SORTS,
 } from "../src/metagraph-accounts.mjs";
 import { handleRequest } from "../workers/api.mjs";
 import { createLocalArtifactEnv } from "../scripts/lib.mjs";
@@ -160,6 +161,183 @@ describe("metagraph-accounts builders", () => {
     assert.equal(data.accounts.length, 1);
     assert.equal(data.accounts[0].event_count, 4);
   });
+
+  test("buildGlobalAccounts handles sparse rows, subnet caps, and D1 string coercion", () => {
+    const subnets = Array.from({ length: 12 }, (_, index) => ({
+      ...NEURON_ROW,
+      netuid: index + 1,
+      uid: index,
+      hotkey: `5Hk${index}`,
+      coldkey: "5CoCap",
+      stake_tao: 100 - index,
+      emission_tao: 10 - index,
+      validator_permit: index % 2 === 0 ? true : 0,
+      block_number: String(1000 + index),
+      captured_at: String(1750000000000 + index),
+    }));
+    const data = buildGlobalAccounts(
+      [
+        ...subnets,
+        { ...NEURON_ROW, coldkey: "", netuid: 99, uid: 0 },
+        { ...NEURON_ROW, coldkey: "5CoBad", netuid: null, uid: 0 },
+        { ...NEURON_ROW, coldkey: "5CoBad", netuid: 1, uid: "bad" },
+        {
+          ...NEURON_ROW,
+          hotkey: null,
+          coldkey: "5CoNullHotkey",
+          netuid: 7,
+          uid: 0,
+        },
+      ],
+      [
+        { coldkey: "", event_count: 9, last_seen_at: 1, last_block: 1 },
+        {
+          coldkey: "5CoCap",
+          event_count: "15",
+          last_seen_at: "1750000000500",
+          last_block: "8454399",
+        },
+      ],
+      { sort: "subnet_count", limit: 1 },
+    );
+    assert.equal(data.accounts.length, 1);
+    const top = data.accounts[0];
+    assert.equal(top.ss58, "5CoCap");
+    assert.equal(top.subnet_count, 12);
+    assert.equal(top.uid_count, 12);
+    assert.equal(top.hotkey_count, 12);
+    assert.equal(top.validator_count, 6);
+    assert.equal(top.event_count, 15);
+    assert.equal(top.latest_block_number, 8454399);
+    assert.equal(top.subnets.length, 10);
+    assert.equal(top.subnets[0].netuid, 1);
+    assert.equal(top.subnets[9].netuid, 10);
+    assert.equal(data.captured_at, new Date(1750000000011).toISOString());
+    assert.equal(data.block_number, 1011);
+  });
+
+  test("buildGlobalAccounts sorts by every supported leaderboard key", () => {
+    const rows = [
+      {
+        ...NEURON_ROW,
+        coldkey: "5CoA",
+        hotkey: "5Ha",
+        stake_tao: 10,
+        emission_tao: 1,
+        validator_permit: 1,
+        captured_at: 1000,
+      },
+      {
+        ...NEURON_ROW,
+        coldkey: "5CoB",
+        hotkey: "5Hb",
+        stake_tao: 20,
+        emission_tao: 5,
+        validator_permit: 0,
+        captured_at: 2000,
+      },
+      {
+        ...NEURON_ROW,
+        coldkey: "5CoC",
+        hotkey: "5Hc",
+        stake_tao: 5,
+        emission_tao: 10,
+        validator_permit: 1,
+        captured_at: 3000,
+      },
+    ];
+    const events = [
+      {
+        coldkey: "5CoA",
+        event_count: 1,
+        last_seen_at: 1000,
+        last_block: 10,
+      },
+      {
+        coldkey: "5CoB",
+        event_count: 50,
+        last_seen_at: 5000,
+        last_block: 20,
+      },
+      {
+        coldkey: "5CoC",
+        event_count: 10,
+        last_seen_at: 3000,
+        last_block: 30,
+      },
+    ];
+    const expectedTop = {
+      total_stake: "5CoB",
+      total_emission: "5CoC",
+      subnet_count: "5CoA",
+      uid_count: "5CoA",
+      hotkey_count: "5CoA",
+      validator_count: "5CoA",
+      event_count: "5CoB",
+      last_update_at: "5CoB",
+      stake_dominance: "5CoB",
+    };
+    for (const sort of GLOBAL_ACCOUNT_SORTS) {
+      const data = buildGlobalAccounts(rows, events, { sort, limit: 3 });
+      assert.equal(data.sort, sort);
+      assert.equal(data.accounts[0].ss58, expectedTop[sort], sort);
+    }
+  });
+
+  test("buildGlobalAccounts nulls dominance and timestamps on junk input", () => {
+    const data = buildGlobalAccounts(
+      [
+        {
+          ...NEURON_ROW,
+          coldkey: "5CoJunk",
+          hotkey: "",
+          stake_tao: -1,
+          emission_tao: "bad",
+          captured_at: "not-a-date",
+          block_number: "bad",
+          validator_permit: true,
+        },
+        {
+          ...NEURON_ROW,
+          coldkey: "5CoZero",
+          stake_tao: 0,
+          emission_tao: 0,
+          captured_at: null,
+        },
+      ],
+      [
+        {
+          coldkey: "5CoJunk",
+          event_count: null,
+          last_seen_at: "",
+          last_block: null,
+        },
+      ],
+      { sort: "last_update_at", limit: 10 },
+    );
+    assert.equal(data.captured_at, null);
+    assert.equal(data.block_number, null);
+    assert.equal(data.accounts[0].stake_dominance, null);
+    assert.equal(data.accounts[0].last_seen_at, null);
+    assert.equal(data.accounts[0].latest_captured_at, null);
+    assert.equal(data.accounts[0].last_update_at, null);
+    assert.equal(data.accounts[0].delegated_stake_tao, 0);
+    assert.equal(data.accounts[1].stake_dominance, null);
+  });
+
+  test("buildGlobalAccounts uses ss58 tie-breakers and non-finite limit fallback", () => {
+    const data = buildGlobalAccounts(
+      [
+        { ...NEURON_ROW, coldkey: "5CoZ", stake_tao: 5 },
+        { ...NEURON_ROW, coldkey: "5CoY", stake_tao: 5 },
+      ],
+      [],
+      { sort: "total_stake", limit: Number.NaN },
+    );
+    assert.equal(data.limit, 20);
+    assert.equal(data.accounts[0].ss58, "5CoY");
+    assert.equal(data.accounts[1].ss58, "5CoZ");
+  });
 });
 
 function combinedD1({ neurons = [], events = [] } = {}) {
@@ -299,5 +477,13 @@ describe("GET /api/v1/accounts via the Worker", () => {
     assert.equal(unsupported.res.status, 400);
     const badLimit = await getJson("/api/v1/accounts?limit=0", env);
     assert.equal(badLimit.res.status, 400);
+  });
+
+  test("GET /accounts?format=csv emits a header-only cold export", async () => {
+    const { text } = await getText("/api/v1/accounts?format=csv", {
+      ...createLocalArtifactEnv(),
+      METAGRAPH_HEALTH_DB: combinedD1(),
+    });
+    assert.equal(text, GLOBAL_ACCOUNT_CSV_HEADER);
   });
 });
