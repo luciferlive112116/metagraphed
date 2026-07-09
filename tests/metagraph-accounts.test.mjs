@@ -480,31 +480,30 @@ describe("metagraph-accounts builders", () => {
     assert.equal(data.captured_at, null);
   });
 
-  test("buildGlobalAccounts clamps oversized limits and null stake_dominance sorts last", () => {
+  test("buildGlobalAccounts clamps oversized limits", () => {
     const rows = Array.from({ length: 3 }, (_, index) => ({
       ...NEURON_ROW,
       coldkey: `5Co${index}`,
       uid: index,
       netuid: index + 1,
     }));
-    const clamped = buildGlobalAccounts(rows, [], { limit: 999 });
-    assert.equal(clamped.limit, 100);
-    assert.equal(clamped.account_count, 3);
+    const data = buildGlobalAccounts(rows, [], { limit: 999 });
+    assert.equal(data.limit, 100);
+    assert.equal(data.account_count, 3);
+  });
 
-    const ranked = buildGlobalAccounts(
-      [{ ...NEURON_ROW, coldkey: "5CoStake", stake_tao: 10 }],
+  test("buildGlobalAccounts treats null stake_dominance as lowest sort rank", () => {
+    const data = buildGlobalAccounts(
       [
-        {
-          coldkey: "5CoNull",
-          event_count: 1,
-          last_seen_at: 1,
-          last_block: 1,
-        },
+        { ...NEURON_ROW, coldkey: "5CoB", stake_tao: 0 },
+        { ...NEURON_ROW, coldkey: "5CoA", stake_tao: 0 },
       ],
+      [],
       { sort: "stake_dominance", limit: 10 },
     );
-    assert.equal(ranked.accounts[0].ss58, "5CoStake");
-    assert.equal(ranked.accounts[1].stake_dominance, null);
+    assert.equal(data.accounts[0].stake_dominance, null);
+    assert.equal(data.accounts[1].stake_dominance, null);
+    assert.equal(data.accounts[0].ss58, "5CoA");
   });
 });
 
