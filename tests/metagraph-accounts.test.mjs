@@ -338,6 +338,174 @@ describe("metagraph-accounts builders", () => {
     assert.equal(data.accounts[0].ss58, "5CoY");
     assert.equal(data.accounts[1].ss58, "5CoZ");
   });
+
+  test("buildGlobalAccounts breaks captured_at ties using block_number", () => {
+    const data = buildGlobalAccounts(
+      [
+        {
+          ...NEURON_ROW,
+          coldkey: "5CoTie",
+          captured_at: 1000,
+          block_number: 5,
+          stake_tao: 1,
+        },
+        {
+          ...NEURON_ROW,
+          coldkey: "5CoTie",
+          netuid: 2,
+          uid: 1,
+          captured_at: 1000,
+          block_number: 10,
+          stake_tao: 1,
+        },
+      ],
+      [],
+      { sort: "total_stake", limit: 10 },
+    );
+    assert.equal(data.accounts[0].latest_block_number, 10);
+    assert.equal(data.block_number, 10);
+  });
+
+  test("buildGlobalAccounts keeps null block_number on the newest capture", () => {
+    const data = buildGlobalAccounts(
+      [
+        {
+          ...NEURON_ROW,
+          coldkey: "5CoNull",
+          captured_at: 2000,
+          block_number: null,
+        },
+        {
+          ...NEURON_ROW,
+          coldkey: "5CoNull",
+          netuid: 2,
+          uid: 1,
+          captured_at: 1000,
+          block_number: 99,
+        },
+      ],
+      [],
+      { limit: 10 },
+    );
+    assert.equal(data.accounts[0].latest_block_number, null);
+    assert.equal(data.block_number, null);
+  });
+
+  test("buildGlobalAccounts sorts subnet footprints by emission, netuid, and uid", () => {
+    const data = buildGlobalAccounts(
+      [
+        {
+          ...NEURON_ROW,
+          netuid: 3,
+          uid: 9,
+          coldkey: "5CoSort",
+          stake_tao: 10,
+          emission_tao: 1,
+        },
+        {
+          ...NEURON_ROW,
+          netuid: 3,
+          uid: 1,
+          coldkey: "5CoSort",
+          stake_tao: 10,
+          emission_tao: 2,
+        },
+        {
+          ...NEURON_ROW,
+          netuid: 2,
+          uid: 0,
+          coldkey: "5CoSort",
+          stake_tao: 10,
+          emission_tao: 2,
+        },
+      ],
+      [],
+      { limit: 10 },
+    );
+    assert.deepEqual(
+      data.accounts[0].subnets.map((subnet) => [subnet.netuid, subnet.uid]),
+      [
+        [2, 0],
+        [3, 1],
+        [3, 9],
+      ],
+    );
+  });
+
+  test("buildGlobalAccounts promotes event last_block when it exceeds neuron height", () => {
+    const data = buildGlobalAccounts(
+      [
+        {
+          ...NEURON_ROW,
+          coldkey: "5CoEvt",
+          block_number: 100,
+          captured_at: 1000,
+        },
+      ],
+      [
+        {
+          coldkey: "5CoEvt",
+          event_count: 1,
+          last_seen_at: 1000,
+          last_block: 500,
+        },
+      ],
+      { limit: 10 },
+    );
+    assert.equal(data.accounts[0].latest_block_number, 500);
+  });
+
+  test("buildGlobalAccounts ignores zero captures and negative netuids", () => {
+    const data = buildGlobalAccounts(
+      [
+        {
+          ...NEURON_ROW,
+          coldkey: "5CoSkip",
+          captured_at: 0,
+          block_number: 1,
+        },
+        {
+          ...NEURON_ROW,
+          coldkey: "5CoSkip",
+          netuid: -1,
+          uid: 0,
+          captured_at: 2000,
+        },
+      ],
+      [],
+      { limit: 10 },
+    );
+    assert.equal(data.accounts.length, 1);
+    assert.equal(data.accounts[0].latest_captured_at, null);
+    assert.equal(data.captured_at, null);
+  });
+
+  test("buildGlobalAccounts clamps oversized limits and null stake_dominance sorts last", () => {
+    const rows = Array.from({ length: 3 }, (_, index) => ({
+      ...NEURON_ROW,
+      coldkey: `5Co${index}`,
+      uid: index,
+      netuid: index + 1,
+    }));
+    const clamped = buildGlobalAccounts(rows, [], { limit: 999 });
+    assert.equal(clamped.limit, 100);
+    assert.equal(clamped.account_count, 3);
+
+    const ranked = buildGlobalAccounts(
+      [{ ...NEURON_ROW, coldkey: "5CoStake", stake_tao: 10 }],
+      [
+        {
+          coldkey: "5CoNull",
+          event_count: 1,
+          last_seen_at: 1,
+          last_block: 1,
+        },
+      ],
+      { sort: "stake_dominance", limit: 10 },
+    );
+    assert.equal(ranked.accounts[0].ss58, "5CoStake");
+    assert.equal(ranked.accounts[1].stake_dominance, null);
+  });
 });
 
 function combinedD1({ neurons = [], events = [] } = {}) {
