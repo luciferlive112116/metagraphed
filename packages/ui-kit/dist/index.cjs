@@ -3396,7 +3396,7 @@ function StatTile({
                 truncate ? "items-baseline" : "flex-wrap items-baseline"
               ),
               children: [
-                /* @__PURE__ */ jsxRuntime.jsx("span", { className: "min-w-0 font-display text-base font-semibold tabular-nums leading-none text-ink-strong sm:text-xl md:text-2xl", children: value }),
+                /* @__PURE__ */ jsxRuntime.jsx("span", { className: "shrink-0 font-display text-base font-semibold tabular-nums leading-none text-ink-strong sm:text-xl md:text-2xl", children: value }),
                 hint ? /* @__PURE__ */ jsxRuntime.jsx(
                   "span",
                   {
