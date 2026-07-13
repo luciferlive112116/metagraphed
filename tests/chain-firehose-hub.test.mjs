@@ -14,10 +14,12 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 import {
   ALERTER_HUB_EVALUATE_TIMEOUT_MS,
+  CHAIN_FIREHOSE_GRAPHQL_SUBSCRIPTION_HIGH_WATER_MARK,
   CHAIN_FIREHOSE_INGEST_TOKEN_HEADER,
   CHAIN_FIREHOSE_MAX_CONNECTIONS_PER_IP,
   CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS,
   CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_IP,
+  CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_SOCKET,
   CHAIN_FIREHOSE_MAX_INGEST_BODY_BYTES,
   CHAIN_FIREHOSE_MAX_SSE_CONNECTIONS,
   CHAIN_FIREHOSE_SSE_HIGH_WATER_MARK,
@@ -185,6 +187,49 @@ test("createAsyncRepeater: a real for-await loop consumes pushed values in order
   repeater.push(3);
   await consumer;
   assert.deepEqual(seen, [1, 2, 3]);
+});
+
+test("createAsyncRepeater: defaults highWaterMark to CHAIN_FIREHOSE_GRAPHQL_SUBSCRIPTION_HIGH_WATER_MARK", async () => {
+  const repeater = createAsyncRepeater();
+  // Fills pending to exactly the default mark, none consumed yet -- not
+  // overflowed (the check is pending.length >= highWaterMark, so the LAST of
+  // these still finds room).
+  for (
+    let i = 0;
+    i < CHAIN_FIREHOSE_GRAPHQL_SUBSCRIPTION_HIGH_WATER_MARK;
+    i += 1
+  ) {
+    repeater.push(i);
+  }
+  // pending.length is now already at the mark -- this one overflows.
+  repeater.push("one-more");
+  const it = repeater[Symbol.asyncIterator]();
+  assert.deepEqual(await it.next(), { value: undefined, done: true });
+});
+
+test("createAsyncRepeater: ends and calls onOverflow instead of buffering past a custom highWaterMark", async () => {
+  let overflowed = false;
+  const repeater = createAsyncRepeater({
+    highWaterMark: 2,
+    onOverflow: () => {
+      overflowed = true;
+    },
+  });
+  repeater.push("a");
+  repeater.push("b");
+  repeater.push("c"); // exceeds the mark -> ends instead of buffering
+  assert.equal(overflowed, true);
+  const it = repeater[Symbol.asyncIterator]();
+  assert.deepEqual(await it.next(), { value: undefined, done: true });
+});
+
+test("createAsyncRepeater: overflow clears any already-buffered pending values", async () => {
+  const repeater = createAsyncRepeater({ highWaterMark: 1 });
+  repeater.push("fills-to-the-mark"); // pending.length 0 -> 1, at the mark
+  repeater.push("triggers-overflow"); // pending.length already >= mark -> finish(), pending cleared
+  repeater.push("dropped-after-finish"); // finished -> silent no-op
+  const it = repeater[Symbol.asyncIterator]();
+  assert.deepEqual(await it.next(), { value: undefined, done: true });
 });
 
 // --- parseChainFirehoseTopics --------------------------------------------------
@@ -1174,6 +1219,84 @@ test("ChainFirehoseHub.unsubscribeChainEvents: unsubscribing a repeater that was
   const repeater = hub.subscribeChainEvents(null);
   assert.doesNotThrow(() => hub.unsubscribeChainEvents(repeater));
   assert.equal(hub.chainEventSubscribersByIp.size, 0);
+});
+
+// --- CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_SOCKET -----------------------
+//
+// Defense-in-depth alongside the per-IP cap above: a hard, socket-scoped
+// invariant via the SAME connection object stamped on ctx.extra at opened()
+// time and threaded through context.graphqlWsConnection into
+// subscribeChainEvents's third argument.
+
+test("ChainFirehoseHub.subscribeChainEvents: enforces the per-socket active subscription cap independent of clientIp", () => {
+  const hub = new ChainFirehoseHub(stubState(), {});
+  const connection = {
+    activeSubscriptions: CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_SOCKET,
+  };
+  assert.equal(hub.subscribeChainEvents(null, "203.0.113.9", connection), null);
+  assert.equal(hub.chainEventSubscribers.size, 0);
+  assert.equal(hub.chainEventSubscribersByIp.has("203.0.113.9"), false);
+});
+
+test("ChainFirehoseHub.subscribeChainEvents: a DIFFERENT socket (same IP) is unaffected by another socket's per-socket cap", () => {
+  const hub = new ChainFirehoseHub(stubState(), {});
+  const fullSocket = {
+    activeSubscriptions: CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_SOCKET,
+  };
+  const freshSocket = { activeSubscriptions: 0 };
+  assert.equal(hub.subscribeChainEvents(null, "203.0.113.9", fullSocket), null);
+  const repeater = hub.subscribeChainEvents(null, "203.0.113.9", freshSocket);
+  assert.notEqual(repeater, null);
+  assert.equal(freshSocket.activeSubscriptions, 1);
+});
+
+test("ChainFirehoseHub.subscribeChainEvents: increments connection.activeSubscriptions on success", () => {
+  const hub = new ChainFirehoseHub(stubState(), {});
+  const connection = { activeSubscriptions: 0 };
+  hub.subscribeChainEvents(null, null, connection);
+  hub.subscribeChainEvents(null, null, connection);
+  assert.equal(connection.activeSubscriptions, 2);
+});
+
+test("ChainFirehoseHub.unsubscribeChainEvents: decrements connection.activeSubscriptions, floored at 0", () => {
+  const hub = new ChainFirehoseHub(stubState(), {});
+  const connection = { activeSubscriptions: 0 };
+  const repeater = hub.subscribeChainEvents(null, null, connection);
+  assert.equal(connection.activeSubscriptions, 1);
+  hub.unsubscribeChainEvents(repeater);
+  assert.equal(connection.activeSubscriptions, 0);
+  assert.doesNotThrow(() => hub.unsubscribeChainEvents(repeater)); // already removed, no-op
+});
+
+test("ChainFirehoseHub.subscribeChainEvents: an undefined connection skips the per-socket check entirely", () => {
+  const hub = new ChainFirehoseHub(stubState(), {});
+  for (
+    let i = 0;
+    i < CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_SOCKET + 5;
+    i += 1
+  ) {
+    assert.notEqual(hub.subscribeChainEvents(null), null);
+  }
+});
+
+test("ChainFirehoseHub.broadcast: a subscription that overflows its buffer is dropped and its counters released", async () => {
+  const hub = new ChainFirehoseHub(stubState(), {});
+  const connection = { activeSubscriptions: 0 };
+  const repeater = hub.subscribeChainEvents(null, "203.0.113.9", connection);
+  for (
+    let i = 0;
+    i < CHAIN_FIREHOSE_GRAPHQL_SUBSCRIPTION_HIGH_WATER_MARK + 1;
+    i += 1
+  ) {
+    hub.broadcast({ table: "blocks", block_number: i });
+  }
+  assert.equal(hub.chainEventSubscribers.size, 0);
+  assert.equal(hub.chainEventSubscribersByIp.has("203.0.113.9"), false);
+  assert.equal(connection.activeSubscriptions, 0);
+  assert.deepEqual(await repeater[Symbol.asyncIterator]().next(), {
+    value: undefined,
+    done: true,
+  });
 });
 
 test("GRAPHQL_WS_SOCKET_TAG is the documented tag string", () => {

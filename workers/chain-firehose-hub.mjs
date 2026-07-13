@@ -135,6 +135,25 @@ export const CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS = 1000;
 // from connection headroom, and it's still generous for any real client.
 export const CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_IP = 20;
 
+// Defense-in-depth alongside the per-IP cap above, not a replacement for it:
+// CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_IP is keyed on resolveClientIp,
+// which falls back to a shared "anonymous" bucket rather than ever leaving a
+// socket untracked -- so in practice it already bounds per-socket multiplexing
+// too. This cap doesn't depend on IP resolution at all: it's a hard invariant
+// on the SAME connection object graphql-ws hands back from opened(), scoped
+// for the life of one socket regardless of how clientIp resolves. Checked in
+// subscribeChainEvents below, in ADDITION to both caps above.
+export const CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_SOCKET = 16;
+
+// Bounds createAsyncRepeater()'s internal `pending` buffer (below) -- a
+// SEPARATE vector from subscription COUNT: even one subscription, once
+// admitted past every cap above, could previously accumulate an unbounded
+// number of un-consumed broadcast() payloads in memory if its consumer
+// stalled (a slow client, a dropped connection graphql-ws hasn't noticed
+// yet). Once a subscription's buffer exceeds this, it's dropped instead of
+// growing forever -- see createAsyncRepeater's onOverflow.
+export const CHAIN_FIREHOSE_GRAPHQL_SUBSCRIPTION_HIGH_WATER_MARK = 64;
+
 // Hibernation tag distinguishing a graphql-ws socket from a plain firehose
 // one -- webSocketMessage/webSocketClose/webSocketError route on
 // graphqlWsSockets.has(ws) directly rather than this tag (a WeakMap lookup
@@ -278,10 +297,31 @@ export function validateChainEventsSubscribePayload(payload) {
 // consumes this the same way it would any other AsyncIterable subscription
 // source. No dependency on graphql/graphql-ws/the DO runtime, so it's fully
 // unit-tested on its own.
-export function createAsyncRepeater() {
+//
+// `pending` is bounded by `highWaterMark`: a stalled consumer (a slow client,
+// or a dropped connection graphql-ws hasn't noticed yet) would otherwise let
+// push() accumulate payloads forever, a per-subscription memory-exhaustion
+// vector independent of the subscription-count caps in subscribeChainEvents
+// below. Once the buffer would exceed the mark, the repeater ends itself and
+// calls `onOverflow` (subscribeChainEvents wires this to unsubscribe the
+// entry) instead of buffering further.
+export function createAsyncRepeater({
+  highWaterMark = CHAIN_FIREHOSE_GRAPHQL_SUBSCRIPTION_HIGH_WATER_MARK,
+  onOverflow = null,
+} = {}) {
   const pending = [];
   let waitingResolve = null;
   let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    pending.length = 0;
+    if (waitingResolve) {
+      const resolve = waitingResolve;
+      waitingResolve = null;
+      resolve({ value: undefined, done: true });
+    }
+  };
   return {
     push(value) {
       if (finished) return;
@@ -290,17 +330,16 @@ export function createAsyncRepeater() {
         waitingResolve = null;
         resolve({ value, done: false });
       } else {
+        if (pending.length >= highWaterMark) {
+          finish();
+          if (onOverflow) onOverflow();
+          return;
+        }
         pending.push(value);
       }
     },
     end() {
-      if (finished) return;
-      finished = true;
-      if (waitingResolve) {
-        const resolve = waitingResolve;
-        waitingResolve = null;
-        resolve({ value: undefined, done: true });
-      }
+      finish();
     },
     [Symbol.asyncIterator]() {
       return {
@@ -316,8 +355,7 @@ export function createAsyncRepeater() {
           });
         },
         return() {
-          finished = true;
-          waitingResolve = null;
+          finish();
           return Promise.resolve({ value: undefined, done: true });
         },
       };
@@ -401,13 +439,15 @@ export class ChainFirehoseHub {
       // #5004 item 2: ctx.extra is whatever this.graphqlWsServer.opened() was
       // called with as its second argument (graphql-ws's own Context.extra
       // field -- confirmed against its type definitions, not guessed) --
-      // handleSubscribe's isGraphqlWs branch below passes { ip: clientIp }.
-      // Threading it into context makes it reachable as context.clientIp in
-      // src/graphql.mjs's chainEventsSubscribe resolver, which passes it on
-      // to subscribeChainEvents for the per-IP subscription-count cap.
+      // handleSubscribe's isGraphqlWs branch below passes { ip: clientIp,
+      // graphqlWsConnection }. Threading both into context makes them
+      // reachable as context.clientIp/context.graphqlWsConnection in
+      // src/graphql.mjs's chainEventsSubscribe resolver, which passes them on
+      // to subscribeChainEvents for the per-IP and per-socket caps.
       context: (ctx) => ({
         [GRAPHQL_SUBSCRIPTION_CONTEXT_KEY]: this,
         clientIp: ctx.extra.ip,
+        graphqlWsConnection: ctx.extra.graphqlWsConnection,
       }),
       /* v8 ignore stop */
     });
@@ -416,32 +456,35 @@ export class ChainFirehoseHub {
   // Registered as context.chainFirehose by graphqlWsServer above; called from
   // src/graphql.mjs's chainEventsSubscribe field resolver. Mirrors the SSE/WS
   // firehose's own topic-filter semantics (chainFirehoseMatchesTopics).
-  // Returns null (not a repeater) at either the global cap
-  // (CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS) or the per-IP cap
-  // (CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_IP) -- the resolver must
-  // throw a GraphQLError for either case, never treat null as "no filter"/an
-  // empty stream.
+  // Returns null (not a repeater) at the global cap
+  // (CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS), the per-IP cap
+  // (CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_IP), or the per-socket cap
+  // (CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_SOCKET) -- the resolver must
+  // throw a GraphQLError for any of the three, never treat null as "no
+  // filter"/an empty stream.
   //
   // #5004 item 2: `clientIp` is threaded from the WS upgrade through
   // graphql-ws's opened()/context() chain into src/graphql.mjs's
   // chainEventsSubscribe resolver, which passes it here as context.clientIp
   // -- see graphqlWsServer's context callback above for how ctx.extra.ip gets
-  // there. This closes the gap the WS-connection-count cap alone left open:
-  // that cap bounds how many graphql-ws SOCKETS one IP can open, but not how
-  // many `chainEvents` subscriptions get multiplexed onto a single
-  // already-open socket (graphql-ws itself imposes no per-socket subscription
-  // limit), so one IP could otherwise consume the entire global
-  // CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS budget through just one
-  // connection. `clientIp` may be undefined for callers that don't go
-  // through the real WS/graphql-ws path -- in production, context.clientIp
-  // is always populated (resolveClientIp, workers/config.mjs, falls back to
-  // a fixed "anonymous" bucket rather than ever returning undefined), so the
-  // only real source of a falsy clientIp here is a direct programmatic call
-  // with one argument (e.g. existing unit tests) -- treated the same
+  // there. `clientIp` may be undefined for callers that don't go through the
+  // real WS/graphql-ws path -- in production, context.clientIp is always
+  // populated (resolveClientIp, workers/config.mjs, falls back to a fixed
+  // "anonymous" bucket rather than ever returning undefined), so the only
+  // real source of a falsy clientIp here is a direct programmatic call with
+  // fewer arguments (e.g. existing unit tests) -- treated the same
   // untracked/anonymous-bucket way handleSubscribe's SSE/WS branches already
   // handle a missing IP, so the per-IP check is simply skipped rather than
   // crashing or double-counting under a bogus key.
-  subscribeChainEvents(topics, clientIp) {
+  //
+  // `connection` is the SAME object stamped on ctx.extra.graphqlWsConnection
+  // at opened()-time (one per socket, `{ activeSubscriptions: 0 }`) --
+  // threaded through the identical context() chain as clientIp. Unlike the
+  // per-IP cap, this doesn't depend on IP resolution at all: it's a hard,
+  // socket-scoped invariant, defense-in-depth alongside (not instead of) the
+  // per-IP cap -- see CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_SOCKET's
+  // own comment for why both are worth having.
+  subscribeChainEvents(topics, clientIp, connection) {
     if (
       this.chainEventSubscribers.size >=
       CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS
@@ -455,14 +498,29 @@ export class ChainFirehoseHub {
     ) {
       return null;
     }
-    const repeater = createAsyncRepeater();
-    this.chainEventSubscribers.add({ repeater, topics, clientIp });
+    const activeForSocket = connection?.activeSubscriptions ?? 0;
+    if (
+      activeForSocket >= CHAIN_FIREHOSE_MAX_GRAPHQL_SUBSCRIPTIONS_PER_SOCKET
+    ) {
+      return null;
+    }
+    const entry = { repeater: null, topics, clientIp, connection };
+    // onOverflow (a stalled consumer exceeding the repeater's high-water
+    // mark, see createAsyncRepeater above) unsubscribes through the SAME
+    // path a normal unsubscribe does, so the per-IP/per-socket counters
+    // release exactly like any other cleanup.
+    const repeater = createAsyncRepeater({
+      onOverflow: () => this.unsubscribeChainEvents(repeater),
+    });
+    entry.repeater = repeater;
+    this.chainEventSubscribers.add(entry);
     if (clientIp) {
       this.chainEventSubscribersByIp.set(
         clientIp,
         (this.chainEventSubscribersByIp.get(clientIp) || 0) + 1,
       );
     }
+    if (connection) connection.activeSubscriptions = activeForSocket + 1;
     return repeater;
   }
 
@@ -480,6 +538,12 @@ export class ChainFirehoseHub {
               this.chainEventSubscribersByIp.set(entry.clientIp, count - 1);
             }
           }
+        }
+        if (entry.connection) {
+          entry.connection.activeSubscriptions = Math.max(
+            0,
+            (entry.connection.activeSubscriptions ?? 1) - 1,
+          );
         }
         return;
       }
@@ -610,11 +674,15 @@ export class ChainFirehoseHub {
         };
         // #5004 item 2: `extra` (this call's second argument) is what
         // graphql-ws exposes as ctx.extra to the context() callback above --
-        // passing { ip: clientIp } here is what makes context.clientIp (and
-        // therefore the per-IP GraphQL-subscription cap in
-        // subscribeChainEvents) possible at all.
+        // passing { ip: clientIp, graphqlWsConnection } here is what makes
+        // context.clientIp/context.graphqlWsConnection (and therefore the
+        // per-IP and per-socket GraphQL-subscription caps in
+        // subscribeChainEvents) possible at all. graphqlWsConnection is a
+        // fresh, socket-scoped counter object -- one per opened() call, so
+        // one per WebSocket, never shared across sockets.
         const closedCb = this.graphqlWsServer.opened(adapterSocket, {
           ip: clientIp,
+          graphqlWsConnection: { activeSubscriptions: 0 },
         });
         const entry = this.graphqlWsSockets.get(server) || {};
         entry.closedCb = closedCb;
