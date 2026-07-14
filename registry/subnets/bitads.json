@@ -11,9 +11,9 @@
     "official-source-repo",
     "official-website"
   ],
-  "website_url": "https://bitads.ai/",
-  "docs_url": "https://bitads.ai/docs",
-  "source_repo": "https://github.com/FirstTensorLabs/BitAds",
+  "website_url": null,
+  "docs_url": null,
+  "source_repo": "https://github.com/study-service/BitAds.ai",
   "dashboard_url": "https://taomarketcap.com/subnets/16",
   "baseline_excluded_surface_ids": [
     "sn-16-taomarketcap-source-repo",
@@ -25,7 +25,7 @@
     "sn-16-website-common-swagger",
     "sn-16-website-common-swagger-json"
   ],
-  "notes": "Reviewed overlay for SN16 BitAds using the official BitAds website, docs page, and source repository. Common API/OpenAPI/Swagger paths currently return website HTML instead of machine-readable API/schema responses, so they are excluded as content mismatches.",
+  "notes": "Reviewed overlay for SN16 BitAds. The former bitads.ai website/docs domain no longer resolves (DNS lame delegation — the domain's own nameservers refuse the query), so website_url/docs_url are nulled until a live domain is confirmed. The operator's active code has moved from FirstTensorLabs/BitAds (now 404) to study-service/BitAds.ai (live), which is now the registered source_repo. Common API/OpenAPI/Swagger paths previously returned website HTML instead of machine-readable API/schema responses, so they are excluded as content mismatches.",
   "curation": {
     "level": "maintainer-reviewed",
     "review_state": "maintainer-reviewed",
@@ -33,7 +33,8 @@
     "verified_at": "2026-06-08T20:25:00.000Z",
     "source_count": 5,
     "gap_notes": [
-      "Official website, docs page, and source repository are verified live.",
+      "The bitads.ai website and docs domain currently fails to resolve (DNS lame delegation) and is nulled until it recovers or a replacement domain is confirmed.",
+      "The former FirstTensorLabs/BitAds source repository now returns 404; the live successor repository is study-service/BitAds.ai.",
       "Common API, health, OpenAPI, Swagger JSON, and Swagger UI paths return marketing-site HTML rather than API/schema payloads.",
       "No verified safe public subnet API endpoint yet.",
       "No verified machine-readable OpenAPI/Swagger schema yet.",
@@ -56,12 +57,12 @@
         "https://github.com/FirstTensorLabs/BitAds"
       ],
       "probe": {
-        "enabled": true,
+        "enabled": false,
         "method": "HEAD",
-        "expect": "html",
-        "timeout_ms": 10000
+        "expect": "html"
       },
-      "notes": "Official BitAds website."
+      "rate_limit_notes": "Not probe-enabled because bitads.ai currently fails to resolve (DNS lame delegation — the domain's nameservers refuse queries); marked degraded until the domain recovers or a replacement is confirmed.",
+      "notes": "Official BitAds website (bitads.ai domain currently unresolvable)."
     },
     {
       "id": "sn-16-bitads-docs",
@@ -74,12 +75,12 @@
       "public_safe": true,
       "source_urls": ["https://bitads.ai/docs"],
       "probe": {
-        "enabled": true,
+        "enabled": false,
         "method": "HEAD",
-        "expect": "html",
-        "timeout_ms": 10000
+        "expect": "html"
       },
-      "notes": "Official BitAds documentation page."
+      "rate_limit_notes": "Not probe-enabled because the bitads.ai domain currently fails to resolve (DNS lame delegation); marked degraded until it recovers or a replacement is confirmed.",
+      "notes": "Official BitAds documentation page (bitads.ai domain currently unresolvable)."
     },
     {
       "id": "sn-16-bitads-source",
@@ -92,12 +93,12 @@
       "public_safe": true,
       "source_urls": ["https://github.com/FirstTensorLabs/BitAds"],
       "probe": {
-        "enabled": true,
+        "enabled": false,
         "method": "HEAD",
-        "expect": "any",
-        "timeout_ms": 10000
+        "expect": "any"
       },
-      "notes": "Official BitAds source repository."
+      "rate_limit_notes": "Not probe-enabled because github.com/FirstTensorLabs/BitAds now returns 404; the operator's live successor repository is study-service/BitAds.ai (the registered top-level source_repo).",
+      "notes": "Former BitAds source repository (FirstTensorLabs/BitAds now returns 404; live code has moved to study-service/BitAds.ai)."
     },
     {
       "auth_required": false,
