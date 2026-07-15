@@ -166,6 +166,7 @@ import {
   CHAIN_TURNOVER_WINDOWS,
   DEFAULT_CHAIN_TURNOVER_WINDOW,
 } from "./chain-turnover.mjs";
+import { buildChainPerformance } from "./chain-performance.mjs";
 import {
   CHAIN_ALPHA_VOLUME_LIMIT_DEFAULT,
   CHAIN_ALPHA_VOLUME_LIMIT_MAX,
@@ -289,6 +290,8 @@ export const SDL = `
     chain_weight_setters(window: String, limit: Int): ChainWeightSetters!
     "Compact all-subnet 7d/30d daily uptime + latency trend matrix from the live health-probe history (probed every ~15 minutes); a cold store still returns both windows, schema-stable and zeroed, never a GraphQL error. Mirrors GET /api/v1/health/trends."
     health_trends: HealthTrends!
+    "Network-wide reward-distribution & score-spread card across every subnet's neurons: incentive/dividends concentration (who actually captures rewards network-wide) plus the trust/consensus/validator_trust score spread. Current snapshot only (no window/params). Every metric block is null (never a GraphQL error) on a cold store. The network analog of subnet_performance. Mirrors GET /api/v1/chain/performance."
+    chain_performance: ChainPerformance!
     "Network-wide emission-yield (return rate) aggregated across every subnet's neurons -- the aggregate network return, the same split by validator vs miner role, and the distribution of the per-neuron return rate. Every aggregate is null (never a GraphQL error) on a cold store. Mirrors GET /api/v1/chain/yield."
     chain_yield: ChainYield!
     "Network-wide rolling 24h buy/sell alpha-volume leaderboard: every subnet with StakeAdded (buy) or StakeRemoved (sell) volume in the last 24h ranked by total_volume_tao, each carrying its full buy/sell/total volume + sentiment scorecard (vol_mcap_ratio always null here -- no per-subnet market-cap input at the network level), plus a network rollup with its own net/gross sentiment reading and the per-subnet total-volume spread, summed live from the account_events stream. Fixed 24h window (no window arg); limit caps the leaderboard (default 20, max 100). A cold store yields a schema-stable zeroed card, never a GraphQL error. Mirrors GET /api/v1/chain/alpha-volume."
@@ -978,6 +981,27 @@ export const SDL = `
     p50: Float
     p75: Float
     p90: Float
+  }
+
+  "Network-wide reward-distribution & score-spread card (#5688) -- the network analog of SubnetPerformance, spanning every subnet's neurons in one snapshot. Metric blocks are null on a cold/empty store. Mirrors GET /api/v1/chain/performance."
+  type ChainPerformance {
+    schema_version: Int!
+    "Distinct subnets the snapshot spans."
+    subnet_count: Int!
+    neuron_count: Int!
+    validator_count: Int!
+    active_count: Int!
+    captured_at: String
+    "Incentive concentration across all neurons network-wide with positive incentive."
+    incentive: ConcentrationMetrics
+    "Dividends concentration across permitted validators network-wide only."
+    dividends: ConcentrationMetrics
+    "Trust score spread across all neurons network-wide."
+    trust: ScoreDistribution
+    "Consensus score spread across all neurons network-wide."
+    consensus: ScoreDistribution
+    "Validator-trust score spread across permitted validators network-wide only."
+    validator_trust: ScoreDistribution
   }
 
   "Per-subnet reward-distribution & score-spread card (#5714). Metric blocks are null on a cold/empty subnet. Mirrors GET /api/v1/subnets/{netuid}/performance."
@@ -1721,6 +1745,7 @@ export const FIELD_COMPLEXITY = {
   chain_weights: RELATIONSHIP_FIELD_COMPLEXITY,
   chain_weight_setters: RELATIONSHIP_FIELD_COMPLEXITY,
   health_trends: RELATIONSHIP_FIELD_COMPLEXITY,
+  chain_performance: RELATIONSHIP_FIELD_COMPLEXITY,
   chain_yield: RELATIONSHIP_FIELD_COMPLEXITY,
   chain_alpha_volume: RELATIONSHIP_FIELD_COMPLEXITY,
   account_prometheus: RELATIONSHIP_FIELD_COMPLEXITY,
@@ -3834,6 +3859,34 @@ const rootValue = {
       observed_at: data.observed_at,
       source: data.source,
       boards: data.boards,
+    };
+  },
+
+  async chain_performance(_args, context) {
+    // Same tryPostgresTier(METAGRAPH_NEURONS_SOURCE) -> buildChainPerformance([])
+    // cold fallback contract handleChainPerformance / MCP get_chain_performance
+    // use: a cold/absent tier yields a schema-stable zeroed card (every metric
+    // block null), never a GraphQL error. handleChainPerformance validates
+    // against an EMPTY param allowlist, so there is no window/limit arg to
+    // mirror -- current snapshot only.
+    const data =
+      (await tryPostgresTier(
+        context.env,
+        postgresTierRequest(context, "/api/v1/chain/performance"),
+        "METAGRAPH_NEURONS_SOURCE",
+      )) ?? buildChainPerformance([]);
+    return {
+      schema_version: data.schema_version ?? 1,
+      subnet_count: data.subnet_count ?? 0,
+      neuron_count: data.neuron_count ?? 0,
+      validator_count: data.validator_count ?? 0,
+      active_count: data.active_count ?? 0,
+      captured_at: data.captured_at ?? null,
+      incentive: data.incentive ?? null,
+      dividends: data.dividends ?? null,
+      trust: data.trust ?? null,
+      consensus: data.consensus ?? null,
+      validator_trust: data.validator_trust ?? null,
     };
   },
 

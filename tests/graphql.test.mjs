@@ -7137,6 +7137,106 @@ describe("Subscription.chainEvents", () => {
   });
 });
 
+describe("graphql — chain_performance (#5688, Postgres-tier + zeroed-card fallback)", () => {
+  const PERFORMANCE_QUERY = `{ chain_performance {
+    schema_version subnet_count neuron_count validator_count active_count captured_at
+    incentive { holders total gini hhi hhi_normalized nakamoto_coefficient top_1pct_share top_5pct_share top_10pct_share top_20pct_share entropy entropy_normalized }
+    dividends { holders gini nakamoto_coefficient }
+    trust { count mean min max p10 p25 p50 p75 p90 }
+    consensus { count mean }
+    validator_trust { count mean }
+  } }`;
+
+  test("cold store: schema-stable zeroed card with every metric block null", async () => {
+    const { status, body } = await gql(PERFORMANCE_QUERY);
+    assert.equal(status, 200);
+    assert.deepEqual(body.data.chain_performance, {
+      schema_version: 1,
+      subnet_count: 0,
+      neuron_count: 0,
+      validator_count: 0,
+      active_count: 0,
+      captured_at: null,
+      incentive: null,
+      dividends: null,
+      trust: null,
+      consensus: null,
+      validator_trust: null,
+    });
+  });
+
+  test("resolves Postgres-tier data, requesting the mirrored REST path", async () => {
+    let capturedUrl;
+    const env = {
+      METAGRAPH_NEURONS_SOURCE: "postgres",
+      DATA_API: {
+        fetch: async (r) => {
+          capturedUrl = new URL(r.url);
+          return Response.json({
+            schema_version: 1,
+            subnet_count: 2,
+            neuron_count: 3,
+            validator_count: 2,
+            active_count: 3,
+            captured_at: "2026-07-10T00:00:00.000Z",
+            incentive: {
+              holders: 3,
+              total: 6,
+              gini: 0.22,
+              hhi: 0.38,
+              hhi_normalized: 0.07,
+              nakamoto_coefficient: 2,
+              top_1pct_share: 0.5,
+              top_5pct_share: 0.5,
+              top_10pct_share: 0.5,
+              top_20pct_share: 0.5,
+              entropy: 1.46,
+              entropy_normalized: 0.92,
+            },
+            dividends: { holders: 2, gini: 0.11, nakamoto_coefficient: 1 },
+            trust: {
+              count: 3,
+              mean: 0.5,
+              min: 0.2,
+              max: 0.8,
+              p10: 0.2,
+              p25: 0.3,
+              p50: 0.5,
+              p75: 0.7,
+              p90: 0.8,
+            },
+            consensus: { count: 3, mean: 0.4 },
+            validator_trust: { count: 2, mean: 0.6 },
+          });
+        },
+      },
+    };
+    const { status, body } = await gql(PERFORMANCE_QUERY, env);
+    assert.equal(status, 200);
+    assert.equal(capturedUrl.pathname, "/api/v1/chain/performance");
+    assert.equal(body.data.chain_performance.subnet_count, 2);
+    assert.equal(body.data.chain_performance.neuron_count, 3);
+    assert.equal(body.data.chain_performance.incentive.nakamoto_coefficient, 2);
+    assert.equal(body.data.chain_performance.dividends.holders, 2);
+    assert.equal(body.data.chain_performance.trust.p90, 0.8);
+    assert.equal(body.data.chain_performance.validator_trust.mean, 0.6);
+  });
+
+  test("a malformed Postgres-tier body falls back to schema-stable defaults (no throw)", async () => {
+    const env = {
+      METAGRAPH_NEURONS_SOURCE: "postgres",
+      DATA_API: { fetch: async () => Response.json({}) },
+    };
+    const { status, body } = await gql(PERFORMANCE_QUERY, env);
+    assert.equal(status, 200);
+    assert.equal(body.data.chain_performance.schema_version, 1);
+    assert.equal(body.data.chain_performance.subnet_count, 0);
+    assert.equal(body.data.chain_performance.captured_at, null);
+    assert.equal(body.data.chain_performance.incentive, null);
+    assert.equal(body.data.chain_performance.trust, null);
+  });
+});
+
 describe("graphql — chain_yield (Postgres-tier + cold-store fallback)", () => {
   function dataApi(response) {
     return { fetch: async () => response };
