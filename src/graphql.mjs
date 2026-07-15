@@ -10,6 +10,11 @@ import { readArtifact, readHealthKv } from "../workers/storage.mjs";
 import { contractVersion } from "../workers/responses.mjs";
 import { tryPostgresTier } from "../workers/postgres-tier.mjs";
 import {
+  loadChainRegistrations,
+  CHAIN_REGISTRATIONS_LIMIT_DEFAULT,
+  CHAIN_REGISTRATIONS_LIMIT_MAX,
+} from "./chain-registrations.mjs";
+import {
   loadChainPrometheus,
   CHAIN_PROMETHEUS_WINDOWS,
   DEFAULT_CHAIN_PROMETHEUS_WINDOW,
@@ -169,7 +174,11 @@ import {
   buildCounterpartyRelationship,
 } from "./counterparties.mjs";
 import { KV_HEALTH_META } from "./kv-keys.mjs";
-import { SS58_ADDRESS_PATTERN } from "../workers/config.mjs";
+import {
+  ANALYTICS_WINDOWS,
+  DEFAULT_ANALYTICS_WINDOW,
+  SS58_ADDRESS_PATTERN,
+} from "../workers/config.mjs";
 import {
   parseHistoryWindow,
   unsupportedWindowMessage,
@@ -368,6 +377,8 @@ export const SDL = `
     chain_calls(window: String, group_by: String, limit: Int, call_module: String): ChainCalls!
     "Network-wide Prometheus telemetry-endpoint announcement leaderboard over a 7d/30d window (default 7d): subnets ranked by PrometheusServed announcements with each's distinct-exporter count and announcements-per-exporter re-announcement intensity, plus a network rollup and the per-subnet intensity spread, summed live from the account_events stream. The telemetry-endpoint companion to chain_serving's axon endpoints -- which subnets run observability infrastructure. limit caps the leaderboard (default 20, max 100). A cold store yields a schema-stable zeroed card, never a GraphQL error. Mirrors GET /api/v1/chain/prometheus."
     chain_prometheus(window: String, limit: Int): ChainPrometheus!
+    "Network-wide neuron-registration leaderboard over a 7d/30d window (default 7d): subnets ranked by NeuronRegistered events with each's distinct-registrant count and registrations-per-registrant churn intensity, plus a network rollup and the per-subnet intensity spread, summed live from the account_events stream. The network-wide counterpart of subnet_registrations. limit caps the leaderboard (default 20, max 100). A cold store yields a schema-stable zeroed card, never a GraphQL error. Mirrors GET /api/v1/chain/registrations."
+    chain_registrations(window: String, limit: Int): ChainRegistrations!
     "Network-wide weight-setter leaderboard over a 7d/30d window (default 7d): the individual validators driving consensus network-wide, each with its total WeightsSet count, share of the network total, and first/last set times, ranked by activity. The setter-level drill-in behind chain_weights. Mirrors GET /api/v1/chain/weights/setters."
     chain_weight_setters(window: String, limit: Int): ChainWeightSetters!
     "Compact all-subnet 7d/30d daily uptime + latency trend matrix from the live health-probe history (probed every ~15 minutes); a cold store still returns both windows, schema-stable and zeroed, never a GraphQL error. Mirrors GET /api/v1/health/trends."
@@ -703,6 +714,44 @@ export const SDL = `
     distinct_servers: Int!
     announcements: Int!
     announcements_per_server: Float
+  }
+
+  type ChainRegistrations {
+    schema_version: Int!
+    window: String
+    observed_at: String
+    subnet_count: Int!
+    network: ChainRegistrationsNetwork!
+    intensity_distribution: ChainRegistrationsIntensityDistribution
+    subnets: [ChainRegistrationsSubnet!]!
+  }
+
+  "Network-wide registration rollup: every subnet with NeuronRegistered events in the window, combined. distinct_registrants counts a hotkey once even when it registers on several subnets, so it is NOT the sum of the per-subnet counts."
+  type ChainRegistrationsNetwork {
+    distinct_registrants: Int!
+    registrations: Int!
+    "Null when distinct_registrants is 0 (no defined intensity without registrants)."
+    registrations_per_registrant: Float
+  }
+
+  "Spread of per-subnet re-registration intensity (NeuronRegistered events per registrant) across EVERY subnet with registrations in the window -- network-wide even when limit truncates the leaderboard."
+  type ChainRegistrationsIntensityDistribution {
+    count: Int!
+    mean: Float!
+    min: Float!
+    p25: Float!
+    median: Float!
+    p75: Float!
+    p90: Float!
+    max: Float!
+  }
+
+  "One subnet's neuron-registration activity in the window, ranked by registrations."
+  type ChainRegistrationsSubnet {
+    netuid: Int!
+    distinct_registrants: Int!
+    registrations: Int!
+    registrations_per_registrant: Float
   }
 
   type ChainPrometheus {
@@ -2296,6 +2345,7 @@ export const FIELD_COMPLEXITY = {
   chain_weights: RELATIONSHIP_FIELD_COMPLEXITY,
   chain_serving: RELATIONSHIP_FIELD_COMPLEXITY,
   chain_prometheus: RELATIONSHIP_FIELD_COMPLEXITY,
+  chain_registrations: RELATIONSHIP_FIELD_COMPLEXITY,
   chain_weight_setters: RELATIONSHIP_FIELD_COMPLEXITY,
   health_trends: RELATIONSHIP_FIELD_COMPLEXITY,
   validator_nominators: RELATIONSHIP_FIELD_COMPLEXITY,
@@ -4949,6 +4999,54 @@ const rootValue = {
         distinct_servers: 0,
         announcements: 0,
         announcements_per_server: null,
+      },
+      intensity_distribution: data.intensity_distribution ?? null,
+      subnets: data.subnets || [],
+    };
+  },
+
+  async chain_registrations({ window, limit }, context) {
+    // chain-registrations.mjs exports no window set of its own: REST resolves the
+    // window through analyticsWindow, i.e. config's shared ANALYTICS_WINDOWS
+    // (7d/30d, default 7d). Validate against that same source so the two cannot
+    // drift, and raise BAD_USER_INPUT rather than silently defaulting.
+    const requestedWindow = window ?? DEFAULT_ANALYTICS_WINDOW;
+    if (!Object.hasOwn(ANALYTICS_WINDOWS, requestedWindow)) {
+      throw new GraphQLError(
+        unsupportedWindowMessage(requestedWindow, ANALYTICS_WINDOWS),
+        { extensions: { code: "BAD_USER_INPUT" } },
+      );
+    }
+    const safeLimit = clampLimit(limit, {
+      defaultLimit: CHAIN_REGISTRATIONS_LIMIT_DEFAULT,
+      maxLimit: CHAIN_REGISTRATIONS_LIMIT_MAX,
+    });
+    const params = new URLSearchParams();
+    params.set("window", requestedWindow);
+    params.set("limit", String(safeLimit));
+    // Same tryPostgresTier(METAGRAPH_ACCOUNT_EVENTS_SOURCE) -> loadChainRegistrations
+    // fallback contract REST's handleChainRegistrations uses -- a cold store yields a
+    // schema-stable zeroed card, never a GraphQL error.
+    const data =
+      (await tryPostgresTier(
+        context.env,
+        postgresTierRequest(context, "/api/v1/chain/registrations", params),
+        "METAGRAPH_ACCOUNT_EVENTS_SOURCE",
+      )) ??
+      (await loadChainRegistrations(graphqlD1(context), {
+        windowLabel: requestedWindow,
+        windowDays: ANALYTICS_WINDOWS[requestedWindow],
+        limit: safeLimit,
+      }));
+    return {
+      schema_version: data.schema_version ?? 1,
+      window: data.window ?? requestedWindow,
+      observed_at: data.observed_at ?? null,
+      subnet_count: data.subnet_count ?? 0,
+      network: data.network ?? {
+        distinct_registrants: 0,
+        registrations: 0,
+        registrations_per_registrant: null,
       },
       intensity_distribution: data.intensity_distribution ?? null,
       subnets: data.subnets || [],
