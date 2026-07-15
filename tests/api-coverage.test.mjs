@@ -1263,10 +1263,11 @@ describe("subnets CSV export", () => {
   });
 
   test("Accept: text/csv is ignored for collection routes without CSV contracts", async () => {
-    // /api/v1/providers is a list route that intentionally has no CSV contract,
-    // so content negotiation must fall through to the JSON envelope.
+    // /api/v1/rpc/endpoints is a list route that intentionally has no CSV
+    // contract, so content negotiation must fall through to the JSON envelope.
+    // (/api/v1/providers held this role until #5665 gave it a CSV contract.)
     const res = await handleRequest(
-      req("/api/v1/providers?limit=1", {
+      req("/api/v1/rpc/endpoints?limit=1", {
         headers: { accept: "text/csv" },
       }),
       createLocalArtifactEnv(),
@@ -1277,7 +1278,6 @@ describe("subnets CSV export", () => {
 
     const body = await res.json();
     assert.equal(body.ok, true);
-    assert.equal(Array.isArray(body.data.providers), true);
   });
 
   test("empty projected CSV exports retain the requested header row", async () => {
@@ -1424,6 +1424,7 @@ describe("registry list CSV export", () => {
   };
 
   const CSV_ROUTES = [
+    "providers",
     "economics",
     "surfaces",
     "subnet-surfaces",
@@ -1450,7 +1451,9 @@ describe("registry list CSV export", () => {
   });
 
   test("list routes without a CSV contract stay JSON-only", () => {
-    for (const id of ["providers", "rpc-endpoints", "source-snapshots"]) {
+    // `providers` moved to a CSV contract in #5665 and is asserted by
+    // CSV_ROUTES above.
+    for (const id of ["rpc-endpoints", "source-snapshots"]) {
       const entry = API_ROUTES.find((route) => route.id === id);
       assert.ok(entry, `route ${id} should exist`);
       assert.notEqual(entry.csv_response, true, `${id} must stay JSON-only`);

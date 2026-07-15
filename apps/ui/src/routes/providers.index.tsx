@@ -22,6 +22,11 @@ import {
 import { classNames, isStaleFreshness } from "@/lib/metagraphed/format";
 import { matchesQuery } from "@/lib/metagraphed/url-state";
 import { matchesProviderAuthority } from "@/lib/metagraphed/providers-url-state";
+import {
+  providersCsvParams,
+  providersCsvIsBroaderThanView,
+} from "@/lib/metagraphed/providers-csv-params";
+import { buildUrl } from "@/lib/metagraphed/client";
 import { resolveProviderCard } from "@/lib/metagraphed/provider-card-fields";
 import { healthStatusSegments } from "@/lib/metagraphed/health-segments";
 import {
@@ -29,6 +34,7 @@ import {
   prefetchBrandIcon,
   PageHero,
   ViewModeToggle,
+  DownloadCsvButton,
   ShareButton,
   TimeAgo,
   ActionBar,
@@ -78,6 +84,13 @@ function ProvidersPage() {
     search.q || search.kind || search.authority || (search.sort && search.sort !== "name"),
   );
   const onReset = () => navigate({ search: { view: search.view } as never, replace: true });
+  const providersCsvUrl = buildUrl("/api/v1/providers", providersCsvParams(search));
+  // `q` (and the "high" authority alias) are client-side-only for this
+  // collection, so the export is broader than the on-screen rows -- say so in
+  // the label rather than handing back a CSV that quietly contradicts the view.
+  const csvLabel = providersCsvIsBroaderThanView(search)
+    ? "Download CSV (all providers)"
+    : "Download CSV";
   return (
     <AppShell>
       <PageHero
@@ -99,6 +112,7 @@ function ProvidersPage() {
             />
             <ActionBar>
               <ResetFiltersButton active={filtersActive} onReset={onReset} bare />
+              <DownloadCsvButton url={providersCsvUrl} label={csvLabel} bare />
               <ShareButton bare />
             </ActionBar>
           </>
