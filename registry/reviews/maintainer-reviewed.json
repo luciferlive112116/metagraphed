@@ -974,6 +974,18 @@
       "notes": "Root->128 accuracy audit re-review pass (#5903): added website + source-repo surfaces (both previously unverified, now confirmed live) and fixed 2 missing probe blocks."
     },
     {
+      "netuid": 70,
+      "slug": "sn-70",
+      "decision": "maintainer-reviewed",
+      "reviewed_at": "2026-07-15T00:00:00.000Z",
+      "confidence": "high",
+      "source_urls": [
+        "https://www.nexisgen.ai/",
+        "https://github.com/RendixNetwork/nexisgen"
+      ],
+      "notes": "Root->128 accuracy audit pass (#5903): first maintainer review for SN70. Added website + source-repo surfaces. api.nexisgen.ai (validator API host) was returning HTTP 502 on all tested routes during this pass -- documented as an observed outage in gap_notes; existing probes are already correctly configured to catch it."
+    },
+    {
       "netuid": 72,
       "slug": "sn-72",
       "decision": "maintainer-reviewed",
