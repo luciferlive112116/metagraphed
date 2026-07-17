@@ -22,6 +22,7 @@ export function AccountAddress({
   copyButtonClassName,
   compact,
   truncate = true,
+  label,
 }: {
   ss58?: string | null;
   fallback: ReactNode;
@@ -37,6 +38,13 @@ export function AccountAddress({
   copyButtonClassName?: string;
   /** Forwarded to the inner CopyButton — pass true inside a dense table/list row. See CopyButton's `compact` doc. */
   compact?: boolean;
+  /**
+   * Accessible label for the copy button, e.g. "coldkey" for a coldkey column
+   * (#6338). Defaults to "account" — the generic case for a bare ss58 — so
+   * existing call sites are unchanged; pass it where the column names a more
+   * specific role.
+   */
+  label?: string;
 }) {
   if (ss58 && isValidSs58(ss58)) {
     return (
@@ -48,7 +56,7 @@ export function AccountAddress({
         </EntityHoverCard>
         <CopyButton
           value={ss58}
-          label="account"
+          label={label ?? "account"}
           className={copyButtonClassName}
           compact={compact}
         />
