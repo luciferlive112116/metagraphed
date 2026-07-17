@@ -158,19 +158,32 @@ function validateQueryParams(url, allowedParams) {
   return null;
 }
 
-function canonicalAnalyticsCacheRoute(url, params = []) {
+// Build the canonical edge-cache key for an analytics route from the handler's
+// ALREADY-RESOLVED param values, so a bare request and an explicit request for
+// the handler's own documented default share one cache entry (#6356).
+//
+// `resolved` is an ordered map of param -> resolved value; its key order is the
+// key's param order (window is always emitted first). Pass the value the handler
+// actually used, not the raw query string: previously only `window` was
+// defaulted here and every other param entered the key only when the caller
+// spelled it out, so `?limit=50` and a bare request (which also means 50) hashed
+// to two entries with identical bodies -- undercutting the "don't re-execute the
+// same aggregation for a cross-colo / agent-polling burst" purpose withEdgeCache
+// documents. Mirrors canonicalLeaderboardsCachePath / canonicalGlobalValidators-
+// CachePath, which already resolve their defaults before keying.
+//
+// A null/undefined value means the param is genuinely absent with no default
+// (e.g. an unset `call_module` filter), so it stays out of the key.
+function canonicalAnalyticsCacheRoute(url, resolved = {}) {
   const search = new URL("https://cache-key.invalid/").searchParams;
-  for (const param of [ANALYTICS_WINDOW_PARAM, ...params]) {
-    const value = url.searchParams.get(param);
-    if (value !== null) {
-      search.set(param, value);
-      continue;
-    }
-    // Normalize the default window into the cache key so a bare request and an
-    // explicit ?window=<default> request share one edge-cache entry.
-    if (param === ANALYTICS_WINDOW_PARAM) {
-      search.set(param, DEFAULT_ANALYTICS_WINDOW);
-    }
+  search.set(
+    ANALYTICS_WINDOW_PARAM,
+    resolved[ANALYTICS_WINDOW_PARAM] ?? DEFAULT_ANALYTICS_WINDOW,
+  );
+  for (const [param, value] of Object.entries(resolved)) {
+    if (param === ANALYTICS_WINDOW_PARAM) continue;
+    if (value === null || value === undefined) continue;
+    search.set(param, String(value));
   }
   const query = search.toString();
   return `${url.pathname}${query ? `?${query}` : ""}`;
@@ -937,7 +950,7 @@ export async function handleChainCalls(request, env, url, ctx = {}) {
     "module_function",
   ]);
   if (groupByError) return analyticsQueryError(groupByError);
-  const { error: limitError } = parseLimitParam(url, {
+  const { limit, error: limitError } = parseLimitParam(url, {
     defaultLimit: 50,
     maxLimit: 100,
   });
@@ -999,7 +1012,12 @@ export async function handleChainCalls(request, env, url, ctx = {}) {
       );
       return usedFallback ? markD1FallbackResponse(response) : response;
     },
-    `${canonicalAnalyticsCacheRoute(url, ["group_by", "limit", "call_module"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, {
+      window: label,
+      group_by: groupBy,
+      limit,
+      call_module: url.searchParams.get("call_module"),
+    })}${csv ? "&format=csv" : ""}`,
   );
 }
 
@@ -1020,7 +1038,7 @@ export async function handleChainSigners(request, env, url, ctx = {}) {
   if (sortError) return analyticsQueryError(sortError);
   // limit/call_module no longer feed a live D1 read (see the retirement note
   // below) but are still shape-validated so the REST contract stays stable.
-  const { error: limitError } = parseLimitParam(url, {
+  const { limit, error: limitError } = parseLimitParam(url, {
     defaultLimit: 50,
     maxLimit: 100,
   });
@@ -1073,7 +1091,12 @@ export async function handleChainSigners(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit", "call_module", "sort"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, {
+      window: label,
+      limit,
+      call_module: url.searchParams.get("call_module"),
+      sort,
+    })}${csv ? "&format=csv" : ""}`,
   );
 }
 
@@ -1088,7 +1111,7 @@ export async function handleChainTransfers(request, env, url, ctx = {}) {
   if (formatError) return analyticsQueryError(formatError);
   // limit no longer feeds a live D1 read (see the retirement note below) but
   // is still shape-validated so the REST contract stays stable.
-  const { error: limitError } = parseLimitParam(url, {
+  const { limit, error: limitError } = parseLimitParam(url, {
     defaultLimit: 25,
     maxLimit: 100,
   });
@@ -1155,7 +1178,7 @@ export async function handleChainTransfers(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -1175,7 +1198,7 @@ export async function handleChainTransferPairs(request, env, url, ctx = {}) {
   if (formatError) return analyticsQueryError(formatError);
   // limit no longer feeds a live D1 read (see the retirement note below) but
   // is still shape-validated so the REST contract stays stable.
-  const { error: limitError } = parseLimitParam(url, {
+  const { limit, error: limitError } = parseLimitParam(url, {
     defaultLimit: 25,
     maxLimit: 100,
   });
@@ -1233,7 +1256,11 @@ export async function handleChainTransferPairs(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit", "sort"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, {
+      window: label,
+      limit,
+      sort,
+    })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -1302,7 +1329,7 @@ export async function handleChainStakeFlow(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -1456,7 +1483,7 @@ export async function handleChainWeights(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -1523,7 +1550,7 @@ export async function handleChainWeightSetters(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -1591,7 +1618,7 @@ export async function handleChainServing(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -1659,7 +1686,7 @@ export async function handleChainPrometheus(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -1728,7 +1755,7 @@ export async function handleChainAxonRemovals(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -1796,7 +1823,7 @@ export async function handleChainRegistrations(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -1865,7 +1892,7 @@ export async function handleChainDeregistrations(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -1933,7 +1960,7 @@ export async function handleChainStakeMoves(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -2001,7 +2028,7 @@ export async function handleChainStakeTransfers(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, { window: label, limit })}${csv ? "&format=csv" : ""}`,
   );
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
@@ -2020,7 +2047,7 @@ export async function handleChainFees(request, env, url, ctx = {}) {
   if (error) return analyticsQueryError(error);
   const formatError = validateFormatParam(url);
   if (formatError) return analyticsQueryError(formatError);
-  const { error: limitError } = parseLimitParam(url, {
+  const { limit, error: limitError } = parseLimitParam(url, {
     defaultLimit: 25,
     maxLimit: 100,
   });
@@ -2076,7 +2103,11 @@ export async function handleChainFees(request, env, url, ctx = {}) {
         "short",
       );
     },
-    `${canonicalAnalyticsCacheRoute(url, ["limit", "call_module"])}${csv ? "&format=csv" : ""}`,
+    `${canonicalAnalyticsCacheRoute(url, {
+      window: label,
+      limit,
+      call_module: url.searchParams.get("call_module"),
+    })}${csv ? "&format=csv" : ""}`,
   );
 }
 

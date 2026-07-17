@@ -25,7 +25,15 @@ import {
   analyticsQueryError,
   canonicalAnalyticsCacheRoute,
   canonicalHealthWindowCachePath,
+  handleChainStakeFlow,
+  handleChainWeights,
+  handleChainWeightSetters,
+  handleChainServing,
 } from "../workers/request-handlers/analytics.mjs";
+import { CHAIN_STAKE_FLOW_LIMIT_DEFAULT } from "../src/chain-stake-flow.mjs";
+import { CHAIN_WEIGHTS_LIMIT_DEFAULT } from "../src/chain-weights.mjs";
+import { CHAIN_WEIGHT_SETTERS_LIMIT_DEFAULT } from "../src/chain-weight-setters.mjs";
+import { CHAIN_SERVING_LIMIT_DEFAULT } from "../src/chain-serving.mjs";
 import { tryPostgresTier } from "../workers/postgres-tier.mjs";
 import { createLocalArtifactEnv } from "../scripts/lib.mjs";
 import { CONTRACT_VERSION } from "../src/contracts.mjs";
@@ -339,7 +347,115 @@ describe("validateQueryParams", () => {
   });
 });
 
+// #6356: end-to-end proof through the handlers themselves -- a bare request and
+// an explicit request for the handler's own documented default must land on ONE
+// edge-cache entry. Previously only `window` was resolved into the key, so these
+// two hashed apart while serving byte-identical bodies.
+describe("analytics edge-cache keys fold in resolved defaults (#6356)", () => {
+  let originalCaches;
+
+  afterEach(() => {
+    if (originalCaches === undefined) delete globalThis.caches;
+    else globalThis.caches = originalCaches;
+    originalCaches = undefined;
+  });
+
+  const ROUTES = [
+    {
+      name: "chain/stake-flow",
+      handler: handleChainStakeFlow,
+      path: "/api/v1/chain/stake-flow",
+      limit: CHAIN_STAKE_FLOW_LIMIT_DEFAULT,
+    },
+    {
+      name: "chain/weights",
+      handler: handleChainWeights,
+      path: "/api/v1/chain/weights",
+      limit: CHAIN_WEIGHTS_LIMIT_DEFAULT,
+    },
+    {
+      name: "chain/weights/setters",
+      handler: handleChainWeightSetters,
+      path: "/api/v1/chain/weights/setters",
+      limit: CHAIN_WEIGHT_SETTERS_LIMIT_DEFAULT,
+    },
+    {
+      name: "chain/serving",
+      handler: handleChainServing,
+      path: "/api/v1/chain/serving",
+      limit: CHAIN_SERVING_LIMIT_DEFAULT,
+    },
+  ];
+
+  async function cacheKeyFor(handler, path) {
+    const cache = mockCaches();
+    cache.install();
+    const { env } = dbWith({ rows: [] });
+    const res = await handler(req(path), env, url(path), ctx);
+    assert.equal(res.status, 200);
+    await Promise.resolve();
+    assert.equal(cache.putKeys.length, 1, `${path} must seed one cache entry`);
+    return cache.putKeys[0];
+  }
+
+  for (const route of ROUTES) {
+    test(`${route.name}: a bare request and ?limit=<default> share one entry`, async () => {
+      originalCaches = globalThis.caches;
+      const bare = await cacheKeyFor(route.handler, route.path);
+      const explicit = await cacheKeyFor(
+        route.handler,
+        `${route.path}?limit=${route.limit}`,
+      );
+      assert.equal(bare, explicit);
+      // The resolved default is actually in the key, not merely absent from both.
+      assert.match(bare, new RegExp(`limit=${route.limit}(&|$)`));
+      assert.match(bare, new RegExp(`window=${DEFAULT_ANALYTICS_WINDOW}(&|$)`));
+    });
+  }
+
+  // The CSV variant keys separately (same aggregation, different serialization),
+  // and must fold in the resolved default exactly the same way.
+  for (const route of ROUTES) {
+    test(`${route.name}: the CSV key also carries the resolved default`, async () => {
+      originalCaches = globalThis.caches;
+      const bare = await cacheKeyFor(route.handler, `${route.path}?format=csv`);
+      const explicit = await cacheKeyFor(
+        route.handler,
+        `${route.path}?limit=${route.limit}&format=csv`,
+      );
+      assert.equal(bare, explicit);
+      assert.match(bare, new RegExp(`limit=${route.limit}(&|$)`));
+      assert.match(bare, /format=csv$/);
+      // JSON and CSV must not collide on one entry.
+      const json = await cacheKeyFor(route.handler, route.path);
+      assert.notEqual(bare, json);
+    });
+  }
+
+  test("an explicit non-default limit still keys separately", async () => {
+    originalCaches = globalThis.caches;
+    const bare = await cacheKeyFor(handleChainServing, "/api/v1/chain/serving");
+    const wider = await cacheKeyFor(
+      handleChainServing,
+      "/api/v1/chain/serving?limit=5",
+    );
+    assert.notEqual(bare, wider);
+  });
+});
+
 describe("canonicalAnalyticsCacheRoute", () => {
+  // The helper now takes each param's already-resolved value (#6356) rather than
+  // re-deriving it from the raw URL, so the key reflects what the handler
+  // actually served. Call sites read via url.searchParams.get(), which decodes,
+  // so percent-encoding still normalizes -- exercised below.
+  const signersResolved = (requestUrl, overrides = {}) => ({
+    window: "30d",
+    limit: 10,
+    call_module: requestUrl.searchParams.get("call_module"),
+    sort: "total_fee_tao",
+    ...overrides,
+  });
+
   test("normalizes decoded query values for cache keys", () => {
     const plain = url(
       "/api/v1/chain/signers?call_module=Balances&limit=10&window=30d&sort=total_fee_tao",
@@ -349,12 +465,12 @@ describe("canonicalAnalyticsCacheRoute", () => {
     );
 
     assert.equal(
-      canonicalAnalyticsCacheRoute(plain, ["limit", "call_module", "sort"]),
+      canonicalAnalyticsCacheRoute(plain, signersResolved(plain)),
       "/api/v1/chain/signers?window=30d&limit=10&call_module=Balances&sort=total_fee_tao",
     );
     assert.equal(
-      canonicalAnalyticsCacheRoute(encoded, ["limit", "call_module", "sort"]),
-      canonicalAnalyticsCacheRoute(plain, ["limit", "call_module", "sort"]),
+      canonicalAnalyticsCacheRoute(encoded, signersResolved(encoded)),
+      canonicalAnalyticsCacheRoute(plain, signersResolved(plain)),
     );
   });
 
@@ -362,12 +478,15 @@ describe("canonicalAnalyticsCacheRoute", () => {
     const bare = url("/api/v1/chain/transfers?limit=25");
     const explicit = url(`/api/v1/chain/transfers?window=7d&limit=25`);
     assert.equal(
-      canonicalAnalyticsCacheRoute(bare, ["limit"]),
+      canonicalAnalyticsCacheRoute(bare, { limit: 25 }),
       `/api/v1/chain/transfers?window=${DEFAULT_ANALYTICS_WINDOW}&limit=25`,
     );
     assert.equal(
-      canonicalAnalyticsCacheRoute(explicit, ["limit"]),
-      canonicalAnalyticsCacheRoute(bare, ["limit"]),
+      canonicalAnalyticsCacheRoute(explicit, {
+        window: DEFAULT_ANALYTICS_WINDOW,
+        limit: 25,
+      }),
+      canonicalAnalyticsCacheRoute(bare, { limit: 25 }),
     );
   });
 
@@ -377,12 +496,77 @@ describe("canonicalAnalyticsCacheRoute", () => {
     );
 
     assert.equal(
-      canonicalAnalyticsCacheRoute(requestUrl, [
-        "group_by",
-        "limit",
-        "call_module",
-      ]),
+      canonicalAnalyticsCacheRoute(requestUrl, {
+        window: "30d",
+        group_by: "module_function",
+        limit: 10,
+        call_module: requestUrl.searchParams.get("call_module"),
+      }),
       "/api/v1/chain/calls?window=30d&group_by=module_function&limit=10&call_module=SubtensorModule",
+    );
+  });
+
+  // #6356: only `window` used to be defaulted into the key. Every other param
+  // entered it solely when the caller spelled it out, so a bare request and an
+  // explicit request for the handler's OWN documented default produced identical
+  // bodies under two different cache entries -- exactly the duplicate
+  // aggregation withEdgeCache exists to avoid.
+  test("a bare request and an explicit default limit share one cache entry", () => {
+    const bare = url("/api/v1/chain/signers");
+    const explicit = url("/api/v1/chain/signers?limit=50");
+    // 50 is handleChainSigners' documented default: both requests serve it.
+    const resolved = { window: DEFAULT_ANALYTICS_WINDOW, limit: 50 };
+    assert.equal(
+      canonicalAnalyticsCacheRoute(bare, resolved),
+      canonicalAnalyticsCacheRoute(explicit, resolved),
+    );
+    assert.equal(
+      canonicalAnalyticsCacheRoute(bare, resolved),
+      `/api/v1/chain/signers?window=${DEFAULT_ANALYTICS_WINDOW}&limit=50`,
+    );
+  });
+
+  test("a defaulted sort / group_by is keyed too, not just window", () => {
+    const bare = url("/api/v1/chain/calls");
+    assert.equal(
+      canonicalAnalyticsCacheRoute(bare, {
+        window: DEFAULT_ANALYTICS_WINDOW,
+        group_by: "module",
+        limit: 50,
+      }),
+      `/api/v1/chain/calls?window=${DEFAULT_ANALYTICS_WINDOW}&group_by=module&limit=50`,
+    );
+  });
+
+  test("a genuinely absent optional filter stays out of the key", () => {
+    // call_module has no default: unset must not become an empty-string param,
+    // or every bare request would key differently from itself.
+    const bare = url("/api/v1/chain/signers");
+    assert.equal(
+      canonicalAnalyticsCacheRoute(bare, {
+        window: DEFAULT_ANALYTICS_WINDOW,
+        limit: 50,
+        call_module: bare.searchParams.get("call_module"),
+        sort: "tx_count",
+      }),
+      `/api/v1/chain/signers?window=${DEFAULT_ANALYTICS_WINDOW}&limit=50&sort=tx_count`,
+    );
+  });
+
+  test("a real filter still separates entries (the fix is not over-broad)", () => {
+    const filtered = url("/api/v1/chain/signers?call_module=Balances");
+    const bare = url("/api/v1/chain/signers");
+    assert.notEqual(
+      canonicalAnalyticsCacheRoute(filtered, {
+        window: DEFAULT_ANALYTICS_WINDOW,
+        limit: 50,
+        call_module: filtered.searchParams.get("call_module"),
+      }),
+      canonicalAnalyticsCacheRoute(bare, {
+        window: DEFAULT_ANALYTICS_WINDOW,
+        limit: 50,
+        call_module: bare.searchParams.get("call_module"),
+      }),
     );
   });
 });
@@ -1650,8 +1834,11 @@ describe("chain analytics ?format=csv export", () => {
       "signer,tx_count,total_fee_tao,total_tip_tao,last_tx_block",
     );
     await Promise.resolve();
+    // #6356: the key now carries the handler's RESOLVED limit/sort, not just the
+    // params the caller happened to spell out -- so this bare request shares an
+    // entry with an explicit ?limit=50&sort=tx_count instead of fragmenting.
     assert.deepEqual(cache.putKeys, [
-      "https://edge-cache.metagraph.sh/analytics/2026-07-03.2/2026-06-18T00%3A00%3A00.000Z/chain-signers/api/v1/chain/signers?window=7d&format=csv",
+      "https://edge-cache.metagraph.sh/analytics/2026-07-03.2/2026-06-18T00%3A00%3A00.000Z/chain-signers/api/v1/chain/signers?window=7d&limit=50&sort=tx_count&format=csv",
     ]);
   });
 
