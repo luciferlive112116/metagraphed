@@ -39,6 +39,7 @@ import {
 import { GITHUB_REPO } from "@/lib/metagraphed/config";
 import { classNames } from "@/lib/metagraphed/format";
 import { StateBlock } from "@/components/metagraphed/states/state-block";
+import { ResetFiltersButton } from "@/components/metagraphed/table-controls";
 import type { CurationLevel, Gap, Subnet } from "@/lib/metagraphed/types";
 
 const STATUS_OPTIONS = ["all", "open", "in-review", "resolved", "wont-fix"] as const;
@@ -472,7 +473,7 @@ function MissingKindsAtAGlance() {
             }
             className="ml-1 inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 text-ink-muted hover:text-ink-strong"
           >
-            <X className="size-3" /> clear
+            <X className="size-3" /> Clear filter
           </button>
         </div>
       ) : null}
@@ -586,15 +587,16 @@ function OpenGapsSection() {
         onChange={(v) => setSearch({ sort: v as typeof search.sort })}
         options={SORT_OPTIONS as readonly string[]}
       />
-      {hasFilters ? (
-        <button
-          type="button"
-          onClick={() => navigate({ search: {} as never, replace: true })}
-          className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-ink-muted hover:text-ink-strong"
-        >
-          <X className="size-3" /> Clear
-        </button>
-      ) : null}
+      {/* The toolbar reset is a full clear (every filter + sort), which is
+          exactly ResetFiltersButton's contract -- so it now uses the shared
+          component every other multi-filter list page uses, instead of a
+          bespoke "Clear" button, for one consistent affordance (#6390). The two
+          chip clears below stay bespoke: they scope to a single filter, which
+          the whole-state reset button is not. */}
+      <ResetFiltersButton
+        active={hasFilters}
+        onReset={() => navigate({ search: {} as never, replace: true })}
+      />
       <span className="ml-auto font-mono text-[10px] text-ink-muted">
         {sorted.length} of {rows.length}
       </span>
@@ -657,7 +659,7 @@ function OpenGapsSection() {
             onClick={() => setSearch({ missing: "" })}
             className="ml-auto inline-flex items-center gap-1 rounded-full border border-border bg-paper px-2 py-0.5 text-[10px] uppercase tracking-widest text-ink-muted hover:text-ink-strong"
           >
-            <X className="size-3" /> clear filter
+            <X className="size-3" /> Clear filter
           </button>
         </div>
       ) : null}
