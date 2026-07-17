@@ -27,6 +27,7 @@ import { schemasQuery, contractsQuery, metagraphedQueryKey } from "@/lib/metagra
 import { normalizeDriftStatus } from "@/lib/metagraphed/schema-drift";
 import { API_BASE, DEFAULT_API_BASE } from "@/lib/metagraphed/config";
 import { isStaleFreshness, classNames } from "@/lib/metagraphed/format";
+import { SearchInput, ResetFiltersButton } from "@/components/metagraphed/table-controls";
 import type { SchemaInfo } from "@/lib/metagraphed/types";
 
 const schemasSearchSchema = z.object({
@@ -354,11 +355,14 @@ function SchemaExplorer() {
         {/* Left rail */}
         <aside className="rounded-xl border border-border bg-card overflow-hidden flex flex-col max-h-[min(680px,70vh)]">
           <div className="border-b border-border p-3 space-y-2.5">
-            <input
+            {/* The shared SearchInput, which carries an aria-label (a
+                placeholder is not an accessible name), replacing the bespoke
+                unlabelled <input> (#6394). w-full keeps the left-rail width. */}
+            <SearchInput
               value={search.q}
-              onChange={(e) => setSearch({ q: e.target.value })}
+              onChange={(q) => setSearch({ q })}
               placeholder="Search schemas…"
-              className="w-full rounded-full border border-border bg-paper px-3 py-1.5 text-[12px] focus:outline-none focus:border-accent/50"
+              className="w-full"
             />
             <div className="flex items-center gap-1">
               {(["all", "drift", "stable"] as const).map((v) => (
@@ -377,8 +381,21 @@ function SchemaExplorer() {
                 </button>
               ))}
             </div>
-            <div className="font-mono text-[10px] uppercase tracking-widest text-ink-muted">
-              {filtered.length} of {all.length}
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-mono text-[10px] uppercase tracking-widest text-ink-muted">
+                {filtered.length} of {all.length}
+              </div>
+              {/* One-click way back to the unfiltered view for a shared
+                  /schemas?q=X&drift=Y link -- clears BOTH the search text and
+                  the drift pill, matching the filtersActive/ResetFiltersButton
+                  convention every other list page uses (#6394). The `open` /
+                  `driftDetail` selection state is a viewer target, not a filter,
+                  so it is left untouched. */}
+              <ResetFiltersButton
+                active={!!search.q || search.drift !== "all"}
+                onReset={() => setSearch({ q: "", drift: "all" })}
+                bare
+              />
             </div>
           </div>
           <ul className="flex-1 overflow-y-auto divide-y divide-border/60">
