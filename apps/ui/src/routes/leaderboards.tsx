@@ -86,6 +86,10 @@ function LeaderboardsPage() {
               label="Deregistrations CSV"
               bare
             />
+            {/* EmissionsLeaderboard reads the window-agnostic /api/v1/economics
+                snapshot (no `win`), so its CSV takes no window param either — it
+                mirrors exactly what the board renders (#6577). */}
+            <DownloadCsvButton url={buildUrl("/api/v1/economics")} label="Emissions CSV" bare />
             <ShareButton bare />
           </ActionBar>
         }
