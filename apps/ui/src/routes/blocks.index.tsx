@@ -111,7 +111,19 @@ function BlocksPage() {
         </Suspense>
       </QueryErrorBoundary>
       <QueryErrorBoundary>
-        <Suspense fallback={<Skeleton className="h-28 w-full mb-8" />}>
+        <Suspense
+          fallback={
+            // Shaped to BlockProductionHeader's own 3-tile grid (#6388), matching
+            // subnets.index.tsx's tile-skeleton convention -- a single flat box
+            // here visibly jumps in height/columns once the real 2/3-col grid
+            // of StatTiles resolves.
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-8">
+              <Skeleton className="h-20" />
+              <Skeleton className="h-20" />
+              <Skeleton className="h-20" />
+            </div>
+          }
+        >
           <BlockProductionHeader />
         </Suspense>
       </QueryErrorBoundary>

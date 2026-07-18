@@ -63,6 +63,28 @@ const WINDOW_BTN_ACTIVE =
 const WINDOW_BTN =
   "rounded-full border border-border bg-card px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-ink-muted hover:border-ink/30";
 
+// Shaped to each board's own layout -- title, one description line, the
+// 3-tile StatTile row, and a table-shaped placeholder -- so the loading
+// state doesn't visibly jump in height/columns once the real content
+// resolves (#6388). All three boards on this route share this exact shape,
+// so one skeleton covers all three Suspense fallbacks.
+function LeaderboardSkeleton() {
+  return (
+    <div className="space-y-4">
+      <div>
+        <Skeleton className="h-3 w-48 mb-2" />
+        <Skeleton className="h-4 w-full max-w-lg" />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Skeleton className="h-20" />
+        <Skeleton className="h-20" />
+        <Skeleton className="h-20" />
+      </div>
+      <Skeleton className="h-64 w-full" />
+    </div>
+  );
+}
+
 // Every board on this route ranks the same 7d/30d window, so the window control lives at the page
 // level and governs both sections rather than each board owning a duplicate toggle.
 function LeaderboardsPage() {
@@ -101,17 +123,17 @@ function LeaderboardsPage() {
       </div>
       <div className="space-y-12">
         <QueryErrorBoundary>
-          <Suspense fallback={<Skeleton className="h-[32rem] w-full" />}>
+          <Suspense fallback={<LeaderboardSkeleton />}>
             <WeightSettingLeaderboard win={win} />
           </Suspense>
         </QueryErrorBoundary>
         <QueryErrorBoundary>
-          <Suspense fallback={<Skeleton className="h-[32rem] w-full" />}>
+          <Suspense fallback={<LeaderboardSkeleton />}>
             <DeregistrationsLeaderboard win={win} />
           </Suspense>
         </QueryErrorBoundary>
         <QueryErrorBoundary>
-          <Suspense fallback={<Skeleton className="h-[32rem] w-full" />}>
+          <Suspense fallback={<LeaderboardSkeleton />}>
             <EmissionsLeaderboard />
           </Suspense>
         </QueryErrorBoundary>
