@@ -1484,6 +1484,58 @@ describe("graphql — endpoint_pools / rpc_pools / endpoint_incidents", () => {
   });
 });
 
+// #6987: agent_resources reuses loadAgentResources (the same artifact read the
+// MCP get_agent_resources tool and REST /api/v1/agent-resources use); the nested
+// payloads are the opaque JSON scalar so they mirror the artifact 1:1.
+describe("graphql — agent_resources (#6987, artifact-backed AI-resources index)", () => {
+  const AGENT_BLOB = {
+    generated_at: "2026-07-01T00:00:00.000Z",
+    published_at: "2026-07-01T00:05:00.000Z",
+    content_hash: "sha256:abc123",
+    summary: { resource_count: 3, by_kind: { agent: 1, mcp: 1, skill: 1 } },
+    copyable_agent: { path: "/agent.md", body: "You are an agent." },
+    mcp: { name: "metagraphed", tools: ["get_agent_catalog", "list_fixtures"] },
+    resources: [
+      { kind: "agent", title: "Agent prompt", url: "/agent.md" },
+      { kind: "mcp", title: "MCP server", url: "/mcp" },
+      { kind: "skill", title: "Bittensor skill", url: "/skills/bittensor" },
+    ],
+  };
+
+  test("resolves the index with nested payloads intact as JSON", async () => {
+    const env = fixtureEnv({ "/metagraph/agent-resources.json": AGENT_BLOB });
+    const res = await gql(
+      "{ agent_resources { generated_at published_at content_hash summary copyable_agent mcp resources } }",
+      env,
+    );
+    assert.equal(res.status, 200);
+    const out = res.body.data.agent_resources;
+    assert.equal(out.generated_at, "2026-07-01T00:00:00.000Z");
+    assert.equal(out.published_at, "2026-07-01T00:05:00.000Z");
+    assert.equal(out.content_hash, "sha256:abc123");
+    // JSON scalar returns the nested objects/arrays unchanged.
+    assert.deepEqual(out.summary, AGENT_BLOB.summary);
+    assert.deepEqual(out.copyable_agent, AGENT_BLOB.copyable_agent);
+    assert.deepEqual(out.mcp, AGENT_BLOB.mcp);
+    assert.deepEqual(out.resources, AGENT_BLOB.resources);
+  });
+
+  test("a cold/absent artifact is a GraphQL error, not null", async () => {
+    // loadAgentResources throws not_found; the executor surfaces it as an error.
+    // agent_resources is non-null, so the error nullifies the whole data root
+    // (matching endpoint_pools' cold-store behaviour), never a silent empty shape.
+    const { body } = await gql(
+      "{ agent_resources { generated_at } }",
+      emptyEnv,
+    );
+    assert.ok(
+      body.errors?.length,
+      "expected a GraphQL error for the cold store",
+    );
+    assert.equal(body.data, null);
+  });
+});
+
 describe("graphql — economics pagination", () => {
   const env = () =>
     fixtureEnv({

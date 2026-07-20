@@ -15,6 +15,7 @@ import { tryPostgresTier } from "../workers/postgres-tier.mjs";
 import { loadEndpointPoolsList } from "./endpoint-pools-mcp.mjs";
 import { loadRpcPoolsList } from "./rpc-pools-mcp.mjs";
 import { loadEndpointIncidentsList } from "./endpoint-incidents-mcp.mjs";
+import { loadAgentResources } from "./agent-resources-mcp.mjs";
 import {
   buildChainAxonRemovals,
   CHAIN_AXON_REMOVALS_WINDOWS,
@@ -453,6 +454,8 @@ export const SDL = `
     rpc_pools(id: String, kind: String, min_eligible_count: Float, max_eligible_count: Float, min_endpoint_count: Float, max_endpoint_count: Float, sort: String, order: String, fields: String, limit: Int, cursor: Int): PoolList!
     "Probe-derived endpoint incident feed -- active endpoint failures/degradations with severity, state, provider, and subnet. Filter by netuid/kind/provider/status/severity/state, sort with sort/order, and page with limit (1-100)/cursor. An invalid filter/sort/limit/cursor is a GraphQL error, not a silently substituted default. Mirrors GET /api/v1/endpoint-incidents."
     endpoint_incidents(netuid: Int, kind: String, provider: String, status: String, severity: String, state: String, sort: String, order: String, fields: String, limit: Int, cursor: Int): IncidentList!
+    "The machine-readable AI-resources index -- the copyable /agent.md prompt, MCP server install metadata + tool listing, the Bittensor skill, llms.txt, OpenAPI, and links to the agent-facing APIs -- so a web UI or agent can render/bootstrap from GraphQL instead of REST-only. GraphQL-only parity (an MCP client already has native tools/list). Build-baked artifact; a cold/absent store is a GraphQL error, not null, matching get_agent_resources. Mirrors GET /api/v1/agent-resources."
+    agent_resources: AgentResources!
     "Global operational health rollup with per-subnet summaries."
     health: GlobalHealth
     "Cross-subnet economic opportunity boards (where to register, what it costs, where the emission and validator headroom are)."
@@ -1649,6 +1652,21 @@ export const SDL = `
     subnet_name: String
     subnet_slug: String
     source_urls: [String!]
+  }
+
+  "The AI-resources index served at GET /api/v1/agent-resources: the copyable agent prompt, MCP install metadata + tool listing, skill/OpenAPI/llms.txt links, and the agent-facing API index (#6987). The nested payloads are opaque JSON -- they mirror the REST artifact 1:1 rather than re-typing a deep, presentation-oriented shape into the schema."
+  type AgentResources {
+    generated_at: String
+    published_at: String
+    content_hash: String
+    "Roll-up counts for the resource index (totals by kind)."
+    summary: JSON
+    "The copyable /agent.md prompt payload."
+    copyable_agent: JSON
+    "MCP server install metadata and its tool listing."
+    mcp: JSON!
+    "The agent-facing resource entries (agent, MCP, skill, OpenAPI, catalog, search, ...)."
+    resources: [JSON!]!
   }
 
   "Shared by endpoint_pools and rpc_pools -- same pools[] row shape, filter/sort/page surface, and pagination-metadata fields (#6570); rpc_pools additionally populates source/operational_observed_at from its live cron overlay, which endpoint_pools leaves null."
@@ -3412,6 +3430,7 @@ export const FIELD_COMPLEXITY = {
   surfaces: RELATIONSHIP_FIELD_COMPLEXITY,
   endpoints: RELATIONSHIP_FIELD_COMPLEXITY,
   endpoint_pools: RELATIONSHIP_FIELD_COMPLEXITY,
+  agent_resources: RELATIONSHIP_FIELD_COMPLEXITY,
   rpc_pools: RELATIONSHIP_FIELD_COMPLEXITY,
   endpoint_incidents: RELATIONSHIP_FIELD_COMPLEXITY,
   health: RELATIONSHIP_FIELD_COMPLEXITY,
@@ -4916,6 +4935,17 @@ const rootValue = {
 
   endpoint_incidents(args, context) {
     return loadEndpointIncidentsList(context, args, { readArtifact });
+  },
+
+  // #6987: reuse loadAgentResources -- the same artifact read + validation the
+  // MCP get_agent_resources tool (and REST /api/v1/agent-resources) use -- rather
+  // than re-deriving a GraphQL-only reader. Its throw on a cold/absent artifact
+  // becomes a rejected promise the graphql executor surfaces as a normal GraphQL
+  // error, matching the other artifact-loader fields above. The AgentResources
+  // type's field names line up with the artifact's keys, so the blob resolves
+  // directly (nested payloads are the opaque JSON scalar).
+  agent_resources(_args, context) {
+    return loadAgentResources(context, { readArtifact });
   },
 
   async health(_args, context) {
