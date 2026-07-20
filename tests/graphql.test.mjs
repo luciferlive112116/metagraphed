@@ -18150,3 +18150,196 @@ describe("graphql — chain_events (#7171, DATA_API all-events feed)", () => {
     assert.equal(FIELD_COMPLEXITY.chain_events, FIELD_COMPLEXITY.extrinsics);
   });
 });
+
+// #7172: subnet-scoped GraphQL parity for five routes that had an MCP tool but
+// no GraphQL field. Each reuses the shaping function REST/MCP already call,
+// degrading a cold Postgres tier to a schema-stable empty payload (an
+// unsupported window/kind/direction is a BAD_USER_INPUT GraphQL error).
+describe("graphql — subnet parity: idle-stake/stake-flow/events/history/prometheus (#7172)", () => {
+  function dataApi(response) {
+    return { fetch: async () => response };
+  }
+
+  test("subnet_idle_stake: cold store degrades to a schema-stable empty card", async () => {
+    const { status, body } = await gql("{ subnet_idle_stake(netuid: 5) }");
+    assert.equal(status, 200);
+    assert.equal(body.data.subnet_idle_stake.netuid, 5);
+    assert.equal(body.data.subnet_idle_stake.neuron_count, 0);
+  });
+
+  test("subnet_idle_stake: resolves the Postgres tier", async () => {
+    const env = {
+      METAGRAPH_NEURONS_SOURCE: "postgres",
+      DATA_API: dataApi(
+        Response.json({
+          schema_version: 1,
+          netuid: 5,
+          neuron_count: 3,
+          idle_neuron_count: 1,
+        }),
+      ),
+    };
+    const { body } = await gql("{ subnet_idle_stake(netuid: 5) }", env);
+    assert.equal(body.data.subnet_idle_stake.neuron_count, 3);
+    assert.equal(body.data.subnet_idle_stake.idle_neuron_count, 1);
+  });
+
+  test("subnet_stake_flow: cold store with default window/direction degrades to a zeroed card", async () => {
+    const { status, body } = await gql("{ subnet_stake_flow(netuid: 5) }");
+    assert.equal(status, 200);
+    assert.equal(body.data.subnet_stake_flow.netuid, 5);
+    assert.equal(body.data.subnet_stake_flow.stake_events, 0);
+  });
+
+  test("subnet_stake_flow: resolves the Postgres tier ({ data } envelope) for a window/direction", async () => {
+    const env = {
+      METAGRAPH_ACCOUNT_EVENTS_SOURCE: "postgres",
+      DATA_API: dataApi(
+        Response.json({
+          data: {
+            schema_version: 1,
+            netuid: 5,
+            window: "7d",
+            net_flow_tao: 42,
+            direction: "in",
+          },
+        }),
+      ),
+    };
+    const { body } = await gql(
+      '{ subnet_stake_flow(netuid: 5, window: "7d", direction: "in") }',
+      env,
+    );
+    assert.equal(body.data.subnet_stake_flow.net_flow_tao, 42);
+    assert.equal(body.data.subnet_stake_flow.window, "7d");
+  });
+
+  test("subnet_stake_flow: an unsupported window is a GraphQL error", async () => {
+    const { body } = await gql(
+      '{ subnet_stake_flow(netuid: 5, window: "99d") }',
+    );
+    assert.ok(body.errors?.length);
+    assert.equal(body.data.subnet_stake_flow, null);
+  });
+
+  test("subnet_stake_flow: an unsupported direction is a GraphQL error", async () => {
+    const { body } = await gql(
+      '{ subnet_stake_flow(netuid: 5, direction: "sideways") }',
+    );
+    assert.ok(body.errors?.length);
+    assert.equal(body.data.subnet_stake_flow, null);
+  });
+
+  test("subnet_events: cold store with no filters degrades to an empty page", async () => {
+    const { status, body } = await gql("{ subnet_events(netuid: 5) }");
+    assert.equal(status, 200);
+    assert.equal(body.data.subnet_events.netuid, 5);
+    assert.equal(body.data.subnet_events.event_count, 0);
+  });
+
+  test("subnet_events: resolves the Postgres tier with kind/block/pagination filters", async () => {
+    const env = {
+      METAGRAPH_ACCOUNT_EVENTS_SOURCE: "postgres",
+      DATA_API: dataApi(
+        Response.json({
+          schema_version: 1,
+          netuid: 5,
+          event_count: 1,
+          events: [{ kind: "StakeAdded", block: 9 }],
+        }),
+      ),
+    };
+    const { body } = await gql(
+      '{ subnet_events(netuid: 5, kind: "StakeAdded", block_start: 1, block_end: 100, limit: 20, offset: 3) }',
+      env,
+    );
+    assert.equal(body.data.subnet_events.event_count, 1);
+    assert.equal(body.data.subnet_events.events[0].kind, "StakeAdded");
+  });
+
+  test("subnet_events: an unsupported event kind is a GraphQL error", async () => {
+    const { body } = await gql(
+      '{ subnet_events(netuid: 5, kind: "NotAKind") }',
+    );
+    assert.ok(body.errors?.length);
+    assert.equal(body.data.subnet_events, null);
+  });
+
+  test("subnet_history: cold store with default window degrades to an empty series", async () => {
+    const { status, body } = await gql("{ subnet_history(netuid: 5) }");
+    assert.equal(status, 200);
+    assert.equal(body.data.subnet_history.netuid, 5);
+    assert.equal(body.data.subnet_history.point_count, 0);
+  });
+
+  test("subnet_history: resolves the Postgres tier for a given window", async () => {
+    const env = {
+      METAGRAPH_NEURONS_SOURCE: "postgres",
+      DATA_API: dataApi(
+        Response.json({
+          schema_version: 1,
+          netuid: 5,
+          window: "7d",
+          point_count: 1,
+          points: [{ snapshot_date: "2026-07-01", neuron_count: 10 }],
+        }),
+      ),
+    };
+    const { body } = await gql(
+      '{ subnet_history(netuid: 5, window: "7d") }',
+      env,
+    );
+    assert.equal(body.data.subnet_history.point_count, 1);
+  });
+
+  test("subnet_history: an unsupported window is a GraphQL error", async () => {
+    const { body } = await gql('{ subnet_history(netuid: 5, window: "3y") }');
+    assert.ok(body.errors?.length);
+    assert.equal(body.data.subnet_history, null);
+  });
+
+  test("subnet_prometheus: cold store with default window degrades to a schema-stable card", async () => {
+    const { status, body } = await gql("{ subnet_prometheus(netuid: 5) }");
+    assert.equal(status, 200);
+    assert.equal(body.data.subnet_prometheus.netuid, 5);
+  });
+
+  test("subnet_prometheus: resolves the Postgres tier for a given window", async () => {
+    const env = {
+      METAGRAPH_ACCOUNT_EVENTS_SOURCE: "postgres",
+      DATA_API: dataApi(
+        Response.json({
+          schema_version: 1,
+          netuid: 5,
+          window: "30d",
+          exporter_count: 4,
+        }),
+      ),
+    };
+    const { body } = await gql(
+      '{ subnet_prometheus(netuid: 5, window: "30d") }',
+      env,
+    );
+    assert.equal(body.data.subnet_prometheus.exporter_count, 4);
+  });
+
+  test("subnet_prometheus: an unsupported window is a GraphQL error", async () => {
+    const { body } = await gql(
+      '{ subnet_prometheus(netuid: 5, window: "99d") }',
+    );
+    assert.ok(body.errors?.length);
+    assert.equal(body.data.subnet_prometheus, null);
+  });
+
+  test("FIELD_COMPLEXITY prices the five fields like their sibling relationship fields", () => {
+    for (const f of [
+      "subnet_idle_stake",
+      "subnet_stake_flow",
+      "subnet_events",
+      "subnet_history",
+      "subnet_prometheus",
+    ]) {
+      assert.equal(FIELD_COMPLEXITY[f], 5);
+    }
+  });
+});

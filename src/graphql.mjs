@@ -252,6 +252,8 @@ import {
   SUBNET_EVENT_SUMMARY_RECENT_LIMIT_DEFAULT,
   SUBNET_EVENT_SUMMARY_RECENT_LIMIT_MAX,
   buildBlockEvents,
+  buildSubnetEvents,
+  INGESTED_EVENT_KINDS,
 } from "./account-events.mjs";
 import {
   DEFAULT_PROMETHEUS_WINDOW,
@@ -267,6 +269,7 @@ import { buildAccountPositionHistory } from "./account-position-history.mjs";
 import {
   DEFAULT_STAKE_FLOW_DIRECTION,
   STAKE_FLOW_DIRECTIONS,
+  buildStakeFlow,
 } from "./stake-flow.mjs";
 import { buildAccountPortfolio } from "./account-portfolio.mjs";
 import { buildAccountPositions } from "./account-nominator-positions.mjs";
@@ -315,6 +318,7 @@ import {
 } from "./chain-query-loaders.mjs";
 import {
   buildNeuronHistory,
+  buildSubnetHistory,
   parseHistoryWindow,
   unsupportedWindowMessage,
 } from "./neuron-history.mjs";
@@ -378,7 +382,15 @@ import {
   CHAIN_WEIGHT_SETTERS_WINDOWS,
   DEFAULT_CHAIN_WEIGHT_SETTERS_WINDOW,
 } from "./chain-weight-setters.mjs";
-import { buildChainIdleStake } from "./subnet-idle-stake.mjs";
+import {
+  buildChainIdleStake,
+  buildSubnetIdleStake,
+} from "./subnet-idle-stake.mjs";
+import {
+  buildSubnetPrometheus,
+  SUBNET_PROMETHEUS_WINDOWS,
+  DEFAULT_SUBNET_PROMETHEUS_WINDOW,
+} from "./subnet-prometheus.mjs";
 import {
   buildChainStakeFlow,
   CHAIN_STAKE_FLOW_LIMIT_DEFAULT,
@@ -480,6 +492,16 @@ export const SDL = `
     subnet_gaps(netuid: Int!): JSON
     "One subnet's curation evidence record — the provenance trail (source URLs, checks, reviewer notes) behind its registry entry. Null when no evidence record has been baked for the netuid (rather than a GraphQL error). Opaque JSON passed through verbatim, matching the get_subnet_evidence MCP/REST shape. Mirrors GET /api/v1/subnets/{netuid}/evidence."
     subnet_evidence(netuid: Int!): JSON
+    "One subnet's live idle-stake scorecard: stake delegated to a hotkey currently earning zero dividends (no validator permit, or a permitted hotkey whose weight-setting output is currently zero). Degrades to a schema-stable empty card, never null. Opaque JSON passed through verbatim, matching the get_subnet_idle_stake MCP/REST shape. Mirrors GET /api/v1/subnets/{netuid}/idle-stake."
+    subnet_idle_stake(netuid: Int!): JSON
+    "One subnet's net stake flow over a 7d/30d/90d window (default 30d): TAO staked vs unstaked, net capital flow, and event counts, summed from the account_events stream. direction narrows to inflow (in) or outflow (out); all (default) reports both. An unsupported window/direction is a GraphQL error; a cold tier degrades to a schema-stable zeroed card. Opaque JSON matching the get_subnet_stake_flow MCP/REST shape. Mirrors GET /api/v1/subnets/{netuid}/stake-flow."
+    subnet_stake_flow(netuid: Int!, window: String, direction: String): JSON
+    "One subnet's paginated first-party chain-event stream, newest first: each event's kind, block, UID, hot/cold keys, amount, and timestamp. Optionally filter by event kind (unsupported kinds are a GraphQL error) and constrain block height with block_start/block_end (inclusive); page with limit (1-1000, default 100) / offset. Degrades to a schema-stable empty page. Opaque JSON matching the get_subnet_events MCP/REST shape. Mirrors GET /api/v1/subnets/{netuid}/events."
+    subnet_events(netuid: Int!, kind: String, block_start: Int, block_end: Int, limit: Int, offset: Int): JSON
+    "One subnet's per-day history from the neuron_daily rollup: neuron count, validator count, total stake (TAO), and total emission (TAO) per snapshot_date, newest first. Window: 7d/30d/90d/1y/all (default 30d); an unsupported window is a GraphQL error. Degrades to a schema-stable empty series (point_count 0). Opaque JSON matching the get_subnet_history MCP/REST shape. Mirrors GET /api/v1/subnets/{netuid}/history."
+    subnet_history(netuid: Int!, window: String): JSON
+    "One subnet's Prometheus-endpoint serving activity over a 7d/30d window (default 7d): distinct exporters (hotkeys), PrometheusServed event count, and average announcements per exporter, computed from the account_events PrometheusServed stream. An unsupported window is a GraphQL error; a cold tier degrades to a schema-stable empty card. Opaque JSON matching the get_subnet_prometheus MCP/REST shape. Mirrors GET /api/v1/subnets/{netuid}/prometheus."
+    subnet_prometheus(netuid: Int!, window: String): JSON
     "Per-subnet axon-removal activity over a 7d/30d window (distinct removers, AxonInfoRemoved count, and removals per remover); a subnet with no events in the window resolves to a schema-stable zeroed card, never null. Mirrors GET /api/v1/subnets/{netuid}/axon-removals."
     subnet_axon_removals(netuid: Int!, window: String): SubnetAxonRemovals!
     "Per-subnet validator weight-setting activity over a 7d/30d window (distinct weight-setters, WeightsSet count, and sets per setter); a subnet with no events in the window resolves to a schema-stable zeroed card, never null. Mirrors GET /api/v1/subnets/{netuid}/weights."
@@ -3962,6 +3984,11 @@ export const FIELD_COMPLEXITY = {
   subnet_metagraph: RELATIONSHIP_FIELD_COMPLEXITY,
   subnet_overview: RELATIONSHIP_FIELD_COMPLEXITY,
   subnet_profile: RELATIONSHIP_FIELD_COMPLEXITY,
+  subnet_idle_stake: RELATIONSHIP_FIELD_COMPLEXITY,
+  subnet_stake_flow: RELATIONSHIP_FIELD_COMPLEXITY,
+  subnet_events: RELATIONSHIP_FIELD_COMPLEXITY,
+  subnet_history: RELATIONSHIP_FIELD_COMPLEXITY,
+  subnet_prometheus: RELATIONSHIP_FIELD_COMPLEXITY,
   chain_identity_history: RELATIONSHIP_FIELD_COMPLEXITY,
   incidents: RELATIONSHIP_FIELD_COMPLEXITY,
   blocks_summary: RELATIONSHIP_FIELD_COMPLEXITY,
@@ -6109,6 +6136,147 @@ const rootValue = {
     // Same baked evidence artifact the REST route + get_subnet_evidence MCP
     // tool read; null when no record has been baked for this netuid.
     return loadArtifact(context, `/metagraph/evidence/${netuid}.json`);
+  },
+
+  // #7172: subnet-scoped parity for five routes that had an MCP tool but no
+  // GraphQL field. Each reuses the shaping function REST + the existing MCP
+  // tool already call, degrading a cold Postgres tier to the same schema-stable
+  // empty payload (never a GraphQL error, except an unsupported window/kind/
+  // direction, which is BAD_USER_INPUT the way the sibling subnet_* fields are).
+  // Nested payloads stay the opaque JSON scalar, mirroring the artifact 1:1.
+  async subnet_idle_stake({ netuid }, context) {
+    return (
+      (await tryPostgresTier(
+        context.env,
+        postgresTierRequest(context, `/api/v1/subnets/${netuid}/idle-stake`),
+        "METAGRAPH_NEURONS_SOURCE",
+      )) ?? buildSubnetIdleStake([], netuid)
+    );
+  },
+
+  async subnet_stake_flow({ netuid, window, direction }, context) {
+    const requestedWindow = window ?? DEFAULT_STAKE_FLOW_WINDOW;
+    if (!Object.hasOwn(STAKE_FLOW_WINDOWS, requestedWindow)) {
+      throw new GraphQLError(
+        unsupportedWindowMessage(requestedWindow, STAKE_FLOW_WINDOWS),
+        { extensions: { code: "BAD_USER_INPUT" } },
+      );
+    }
+    const requestedDirection = direction ?? DEFAULT_STAKE_FLOW_DIRECTION;
+    if (!STAKE_FLOW_DIRECTIONS.includes(requestedDirection)) {
+      throw new GraphQLError(
+        `direction must be one of: ${STAKE_FLOW_DIRECTIONS.join(", ")}.`,
+        { extensions: { code: "BAD_USER_INPUT" } },
+      );
+    }
+    const params = new URLSearchParams();
+    params.set("window", requestedWindow);
+    params.set("direction", requestedDirection);
+    // Same tryPostgresTier(METAGRAPH_ACCOUNT_EVENTS_SOURCE) -> { data } ->
+    // buildStakeFlow([]) zeroed-card fallback the get_subnet_stake_flow tool
+    // uses; direction only narrows the live query, so a cold tier degrades to
+    // the same window-scoped zeroed card regardless of direction.
+    const pg = await tryPostgresTier(
+      context.env,
+      postgresTierRequest(
+        context,
+        `/api/v1/subnets/${netuid}/stake-flow`,
+        params,
+      ),
+      "METAGRAPH_ACCOUNT_EVENTS_SOURCE",
+    );
+    return pg?.data ?? buildStakeFlow([], netuid, { window: requestedWindow });
+  },
+
+  async subnet_events(
+    { netuid, kind, block_start, block_end, limit, offset },
+    context,
+  ) {
+    if (kind != null && !INGESTED_EVENT_KINDS.includes(kind)) {
+      throw new GraphQLError(
+        `"${kind}" is not a supported event kind. Supported: ${INGESTED_EVENT_KINDS.join(", ")}.`,
+        { extensions: { code: "BAD_USER_INPUT" } },
+      );
+    }
+    const safeLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(1000, Math.floor(limit)))
+      : 100;
+    const safeOffset = Number.isFinite(offset)
+      ? Math.max(0, Math.floor(offset))
+      : 0;
+    const params = new URLSearchParams();
+    if (kind != null) params.set("kind", kind);
+    if (block_start != null) params.set("block_start", String(block_start));
+    if (block_end != null) params.set("block_end", String(block_end));
+    params.set("limit", String(safeLimit));
+    params.set("offset", String(safeOffset));
+    // account_events is retired (#4772), so the D1 fallback buildSubnetEvents([])
+    // never sees block_start/block_end/cursor -- they only narrow the live
+    // Postgres-tier query, matching the get_subnet_events tool.
+    return (
+      (await tryPostgresTier(
+        context.env,
+        postgresTierRequest(
+          context,
+          `/api/v1/subnets/${netuid}/events`,
+          params,
+        ),
+        "METAGRAPH_ACCOUNT_EVENTS_SOURCE",
+      )) ??
+      buildSubnetEvents([], netuid, {
+        limit: safeLimit,
+        offset: safeOffset,
+        nextCursor: null,
+      })
+    );
+  },
+
+  async subnet_history({ netuid, window }, context) {
+    const { label, error } = parseHistoryWindow(window);
+    if (error) {
+      throw new GraphQLError(error.message, {
+        extensions: { code: "BAD_USER_INPUT" },
+      });
+    }
+    const params = new URLSearchParams();
+    params.set("window", label);
+    // neuron_daily D1 was retired (#4772); buildSubnetHistory([]) yields the
+    // schema-stable point_count:0 payload a cold Postgres tier degrades to,
+    // mirroring loadSubnetHistory behind the get_subnet_history tool.
+    return (
+      (await tryPostgresTier(
+        context.env,
+        postgresTierRequest(
+          context,
+          `/api/v1/subnets/${netuid}/history`,
+          params,
+        ),
+        "METAGRAPH_NEURONS_SOURCE",
+      )) ?? buildSubnetHistory([], netuid, { window: label })
+    );
+  },
+
+  async subnet_prometheus({ netuid, window }, context) {
+    const requestedWindow = window ?? DEFAULT_SUBNET_PROMETHEUS_WINDOW;
+    if (!Object.hasOwn(SUBNET_PROMETHEUS_WINDOWS, requestedWindow)) {
+      throw new GraphQLError(
+        unsupportedWindowMessage(requestedWindow, SUBNET_PROMETHEUS_WINDOWS),
+        { extensions: { code: "BAD_USER_INPUT" } },
+      );
+    }
+    const params = new URLSearchParams();
+    params.set("window", requestedWindow);
+    return (
+      (await tryPostgresTier(
+        context.env,
+        postgresTierRequest(
+          context,
+          `/api/v1/subnets/${netuid}/prometheus`,
+          params,
+        ),
+        "METAGRAPH_ACCOUNT_EVENTS_SOURCE",
+      )) ?? buildSubnetPrometheus(null, netuid, { window: requestedWindow })
+    );
   },
 
   async subnet_health_incidents({ netuid, window }, context) {
